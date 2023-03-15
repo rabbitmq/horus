@@ -25,9 +25,11 @@
 %% or in another one, the code of the called functions is extracted and copied
 %% as well. This is to make sure the result is completely standalone.
 %%
-%% To avoid any copies of standard Erlang APIs or Khepri itself, it is
-%% possible to specify a list of modules which should not be copied. In this
-%% case, calls to functions in those modules are left unmodified.
+%% Calls to functions from standard Erlang APIs or Horus itself are left as
+%% external calls (i.e. their code is not copied). To avoid any copies of
+%% other modules, it is possible to specify a list of modules which should not
+%% be copied. In this case, calls to functions in those modules are left
+%% unmodified.
 %%
 %% Once the code was extracted and verified, a new module is generated as an
 %% "assembly form", ready to be compiled again to an executable module. The
@@ -50,17 +52,13 @@
 %% abstract code (i.e. after parsing but before compilation) is available in
 %% the `env'. We compile that abstract code and extract the assembly from that
 %% compiled beam.
-%%
-%% This module is private. The documentation is still visible because it may
-%% help understand some implementation details. However, this module should
-%% never be called directly outside of Khepri.
 
--module(khepri_fun).
+-module(horus).
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
--include("src/khepri_fun.hrl").
+-include("src/horus.hrl").
 
 -export([to_standalone_fun/1,
          to_standalone_fun/2,
@@ -292,7 +290,7 @@ fun((#{calls := #{Call :: mfa() => true},
 %%
 %% This is the same as:
 %% ```
-%% khepri_fun:to_standalone_fun(Fun, #{}).
+%% horus:to_standalone_fun(Fun, #{}).
 %% '''
 %%
 %% @param Fun the anonymous function to extract
@@ -357,7 +355,7 @@ to_standalone_fun1(Fun, Options) ->
 to_standalone_fun2(Fun, State) ->
     case to_cached_standalone_fun(Fun, State) of
         undefined ->
-            Lock = {{khepri_fun, Fun}, self()},
+            Lock = {{horus, Fun}, self()},
             global:set_lock(Lock, [node()]),
             try
                 case to_cached_standalone_fun(Fun, State) of
@@ -494,7 +492,7 @@ to_embedded_standalone_fun(
 
 -spec standalone_fun_cache_key(State) -> Key when
       State :: #state{},
-      Key :: {?MODULE,
+      Key :: {horus,
               standalone_fun_cache_key,
               {module(), atom(), arity()},
               binary()}.
@@ -528,7 +526,9 @@ standalone_fun_cache_key(
 standalone_fun_cache_key(Module, Name, Arity, Checksum, Options) ->
     %% We also include the options in the cache key because different options
     %% could affect the created standalone function.
-    {?MODULE, standalone_fun_cache, {Module, Name, Arity}, Checksum, Options}.
+    %% TODO: Don't keep a reference to anonymous functions (callbacks),
+    %% otherwise the code can't be purge probably.
+    {horus, standalone_fun_cache, {Module, Name, Arity}, Checksum, Options}.
 
 -spec get_cached_standalone_fun(State) -> Ret when
       State :: #state{},
@@ -920,7 +920,7 @@ exec(
     Env1 = to_actual_arg(Env),
     erlang:apply(Module, ?SF_ENTRYPOINT, Args ++ Env1);
 exec(#standalone_fun{} = StandaloneFun, Args) ->
-    exit({badarity, {StandaloneFun, Args}});
+    error({badarity, {StandaloneFun, Args}});
 exec(Fun, Args) ->
     erlang:apply(Fun, Args).
 
@@ -935,9 +935,7 @@ load_standalone_fun(#standalone_fun{module = Module, beam = Beam}) ->
             ok;
         _ ->
             ok
-    end;
-load_standalone_fun(Fun) when is_function(Fun) ->
-    ok.
+    end.
 
 -spec to_fun(StandaloneFun) -> Fun when
       StandaloneFun :: standalone_fun(),
@@ -1614,7 +1612,7 @@ lookup_function(
     %% in the lambda's env.
     %%
     %% There here, we compile the abstract form and extract the assembly from
-    %% the compiled beam. This allows to use the rest of `khepri_fun'
+    %% the compiled beam. This allows to use the rest of `horus'
     %% unmodified.
     %%
     %% FIXME: Can we compile to assembly form using 'S' instead?
@@ -1694,7 +1692,7 @@ erl_eval_fun_to_asm1(Module, Name, Arity, Clauses) ->
       BeamFileRecord :: #beam_file_ext{}.
 
 -define(ASM_CACHE_KEY(Module, Checksum),
-        {?MODULE, asm_cache, Module, Checksum}).
+        {horus, asm_cache, Module, Checksum}).
 
 disassemble_module(Module, #state{checksums = Checksums} = State) ->
     case Checksums of
@@ -1763,7 +1761,7 @@ disassemble_module1(Module, undefined) ->
     {BeamFileRecord, Checksum}.
 
 -ifdef(TEST).
--define(OBJECT_CODE_KEY(Module), {?MODULE, object_code, Module}).
+-define(OBJECT_CODE_KEY(Module), {horus, object_code, Module}).
 
 override_object_code(Module, Beam) ->
     Key = ?OBJECT_CODE_KEY(Module),
@@ -2236,7 +2234,10 @@ should_process_function(
          errors = Errors} = State)
   when is_function(Callback) ->
     try
-        ShouldProcess = Callback(Module, Name, Arity, FromModule),
+        ShouldProcess =
+        default_should_process_function(Module, Name, Arity)
+        andalso
+        Callback(Module, Name, Arity, FromModule),
         {ShouldProcess, State}
     catch
         throw:Error ->
@@ -2245,11 +2246,11 @@ should_process_function(
             {false, State1}
     end;
 should_process_function(Module, Name, Arity, _FromModule, State) ->
-    {default_should_process_function(Module, Name, Arity),
-     State}.
+    ShouldProcess = default_should_process_function(Module, Name, Arity),
+    {ShouldProcess, State}.
 
-default_should_process_function(erlang, _Name, _Arity)  -> false;
-default_should_process_function(_Module, _Name, _Arity) -> true.
+default_should_process_function(Module, _Name, _Arity) ->
+    horus_utils:should_collect_code_for_module(Module).
 
 -spec is_standalone_fun_still_needed(State) -> IsNeeded when
       State :: #state{},
@@ -2547,7 +2548,7 @@ gen_module_name(#state{fun_info = Info, functions = Functions}) ->
     Checksum = erlang:phash2(Functions),
     InternalName = lists:flatten(
                      io_lib:format(
-                       "kfun__~s__~s__~b", [Module, Name, Checksum])),
+                       "horus__~s__~s__~b", [Module, Name, Checksum])),
     list_to_atom(InternalName).
 
 -spec gen_function_name(Module, Name, Arity, State) -> Name when

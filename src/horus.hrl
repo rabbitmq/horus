@@ -10,7 +10,7 @@
 -record(standalone_fun, {module :: module(),
                          beam :: binary(),
                          arity :: arity(),
-                         literal_funs :: [khepri_fun:standalone_fun()],
+                         literal_funs :: [horus:standalone_fun()],
                          env :: list()}).
 
 -define(IS_STANDALONE_FUN(StandaloneFun),

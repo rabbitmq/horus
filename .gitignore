@@ -1,0 +1,12 @@
+erl_crash.dump
+.sw?
+.*.sw?
+/deps
+/_build
+/_checkouts
+/doc/*
+!/doc/_head.html
+!/doc/overview.edoc
+!/doc/stylesheet.css
+/mix.lock
+/nonode@nohost/
