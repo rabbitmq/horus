@@ -405,24 +405,16 @@ to_standalone_fun3(
                       name := Name,
                       arity := Arity,
                       type := Type}} = State) ->
+    case Type of
+        local ->
+            ensure_function_is_exported(Module, Name, Arity, Module);
+        external ->
+            ensure_function_is_exported(Module, Name, Arity, undefined)
+    end,
     %% Don't extract functions like "fun dict:new/0" which are not meant to be
     %% copied.
-    {ShouldProcess,
-     State1} = case Type of
-                   local ->
-                       should_process_function(
-                         Module, Name, Arity, Module, State);
-                   external ->
-                       _ = code:ensure_loaded(Module),
-                       case erlang:function_exported(Module, Name, Arity) of
-                           true ->
-                               should_process_function(
-                                 Module, Name, Arity, undefined, State);
-                           false ->
-                               throw({call_to_unexported_function,
-                                      {Module, Name, Arity}})
-                       end
-               end,
+    {ShouldProcess, State1} = should_process_function(
+                                Module, Name, Arity, Module, State),
     case ShouldProcess of
         true ->
             State2 = pass1(State1),
@@ -521,6 +513,7 @@ standalone_fun_cache_key(
                       arity := Arity,
                       type := external},
          options = Options}) ->
+    ensure_function_is_exported(Module, Name, Arity, undefined),
     Checksum = Module:module_info(md5),
     standalone_fun_cache_key(Module, Name, Arity, Checksum, Options).
 
@@ -714,7 +707,7 @@ handle_compilation_error(Asm, Error) ->
 
 handle_validation_error(
   Asm,
-  {{_, Name, Arity},
+  {{Module, Name, Arity},
    {{Call, _Arity, {f, EntryLabel}},
     CallIndex,
     no_bs_start_match2}},
@@ -724,7 +717,8 @@ handle_validation_error(
      _Attributes,
      Functions,
      _Labels} = Asm,
-    #function{code = Instructions} = find_function(Functions, Name, Arity),
+    #function{code = Instructions} = find_function(
+                                       Functions, Module, Name, Arity),
     Comments = find_comments_in_branch(Instructions, CallIndex),
     Location = {'after', {label, EntryLabel}},
     add_comments_and_retry(Asm, Error, EntryLabel, Location, Comments);
@@ -1584,6 +1578,7 @@ pass1_process_call(
          all_calls = AllCalls} = State) ->
     CallKey = {Module, Name, Arity},
     AllCalls1 = AllCalls#{CallKey => true},
+    ensure_function_is_exported(Module, Name, Arity, FromModule),
     case should_process_function(Module, Name, Arity, FromModule, State) of
         {true, State1} ->
             case Functions of
@@ -1628,30 +1623,37 @@ lookup_function(
     %% FIXME: Can we compile to assembly form using 'S' instead?
     #beam_file_ext{code = Functions} = erl_eval_fun_to_asm(
                                          Module, Name, Arity, Env),
-    {find_function(Functions, Name, Arity), State};
+    {find_function(Functions, Module, Name, Arity), State};
 lookup_function(Module, Name, Arity, State) ->
     {#beam_file_ext{code = Functions}, State1} = disassemble_module(
                                                    Module, State),
-    {find_function(Functions, Name, Arity), State1}.
+    {find_function(Functions, Module, Name, Arity), State1}.
 
--spec find_function([Function], Name, Arity) -> Function when
+-spec find_function([Function], Module, Name, Arity) -> Function when
       Function :: #function{},
+      Module :: module(),
       Name :: atom(),
       Arity :: non_neg_integer() | undefined.
 %% Finds a function in a list of functions by its name and arity
 
 find_function(
   [#function{name = Name, arity = Arity} = Function | _],
-  Name, Arity) when is_integer(Arity) ->
+  _Module, Name, Arity) when is_integer(Arity) ->
     Function;
 find_function(
   [#function{name = Name} = Function | _],
-  Name, undefined) ->
+  _Module, Name, undefined) ->
     Function;
 find_function(
   [_ | Rest],
-  Name, Arity) ->
-    find_function(Rest, Name, Arity).
+  Module, Name, Arity) ->
+    find_function(Rest, Module, Name, Arity);
+find_function(
+  [],
+  Module, Name, Arity) ->
+    throw(?horus_error(
+             call_to_unexported_function,
+             #{mfa => {Module, Name, Arity}})).
 
 -spec erl_eval_fun_to_asm(Module, Name, Arity, Env) -> BeamFileRecord when
       Module :: module(),
@@ -2225,6 +2227,26 @@ ensure_instruction_is_permitted(
 ensure_instruction_is_permitted(_Instruction, State) ->
     State.
 
+-spec ensure_function_is_exported(Module, Name, Arity, FromModule) -> ok when
+      Module :: module(),
+      Name :: atom(),
+      Arity :: arity(),
+      FromModule :: module().
+
+ensure_function_is_exported(Module, _Name, _Arity, Module)
+  when Module =/= undefined ->
+    ok;
+ensure_function_is_exported(Module, Name, Arity, _FromModule) ->
+    _ = code:ensure_loaded(Module),
+    case erlang:function_exported(Module, Name, Arity) of
+        true ->
+            ok;
+        false ->
+            throw(?horus_error(
+                     call_to_unexported_function,
+                     #{mfa => {Module, Name, Arity}}))
+    end.
+
 -spec should_process_function(Module, Name, Arity, FromModule, State) ->
     {ShouldProcess, State} when
       Module :: module(),
@@ -2252,7 +2274,7 @@ should_process_function(
     try
         ShouldProcess =
         default_should_process_function(Module, Name, Arity)
-        andalso
+        and
         Callback(Module, Name, Arity, FromModule),
         {ShouldProcess, State}
     catch
