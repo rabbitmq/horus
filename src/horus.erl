@@ -2182,9 +2182,9 @@ fix_create_bin_list(
   [{atom, string} = Type, Seg, Unit, Flags, {u, Offset} = _Val, Size
    | Args],
   #state{strings_in_progress = Strings} = State) ->
-    Seg1 = fix_integer(Seg),
-    Unit1 = fix_integer(Unit),
-    Size1 = {integer, Length} = fix_integer(Size),
+    Seg1 = fix_type(Seg),
+    Unit1 = fix_type(Unit),
+    Size1 = {integer, Length} = fix_type(Size),
     ?assertNotEqual(undefined, Strings),
     Binary = binary:part(Strings, {Offset, Length}),
     Val = {string, Binary},
@@ -2193,17 +2193,26 @@ fix_create_bin_list(
   [Type, Seg, Unit, Flags, Val, Size
    | Args],
   State) ->
-    Seg1 = fix_integer(Seg),
-    Unit1 = fix_integer(Unit),
-    Val1 = fix_integer(Val),
-    Size1 = fix_integer(Size),
+    Seg1 = fix_type(Seg),
+    Unit1 = fix_type(Unit),
+    Val1 = fix_type(Val),
+    Size1 = fix_type(Size),
     [Type, Seg1, Unit1, Flags, Val1, Size1 | fix_create_bin_list(Args, State)];
 fix_create_bin_list([], _State) ->
     [].
 
-fix_integer({u, U}) -> U;
-fix_integer({i, I}) -> {integer, I};
-fix_integer(Other)  -> Other.
+fix_type({u, U}) ->
+    U;
+fix_type({i, I}) ->
+    {integer, I};
+fix_type({tr, Reg, {{t_bitstring, _} = Type, _, _}}) ->
+    {tr, Reg, Type};
+fix_type({tr, Reg, {{t_fun, _Arity, _Domain, _Range} = Type, _, _}}) ->
+    {tr, Reg, Type};
+fix_type({tr, Reg, {{t_integer, _} = Type, _, _}}) ->
+    {tr, Reg, Type};
+fix_type(Other) ->
+    Other.
 
 %% The compiler in Erlang 25 adds type information in the form of "typed
 %% registers" (`tr') to allow the JIT to do some optimizations. See:
