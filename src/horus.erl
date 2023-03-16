@@ -949,11 +949,19 @@ exec(Fun, Args) ->
       StandaloneFun :: standalone_fun().
 %% @private
 
-load_standalone_fun(#standalone_fun{module = Module, beam = Beam}) ->
+load_standalone_fun(
+  #standalone_fun{module = Module, beam = Beam} = StandaloneFun) ->
     case code:is_loaded(Module) of
         false ->
-            {module, _} = code:load_binary(Module, ?MODULE_STRING, Beam),
-            ok;
+            case code:load_binary(Module, ?MODULE_STRING, Beam) of
+                {module, _} ->
+                    ok;
+                {error, _} = Error ->
+                    ?horus_misuse(
+                       invalid_generated_module,
+                       #{standalone_fun => StandaloneFun,
+                         error => Error})
+            end;
         _ ->
             ok
     end.
