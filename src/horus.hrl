@@ -11,7 +11,8 @@
                          beam :: binary(),
                          arity :: arity(),
                          literal_funs :: [horus:standalone_fun()],
-                         env :: list()}).
+                         env :: list(),
+                         debug_info :: horus:debug_info() | undefined}).
 
 -define(IS_STANDALONE_FUN(StandaloneFun),
         (is_record(StandaloneFun, standalone_fun) orelse

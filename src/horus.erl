@@ -236,7 +236,8 @@ fun((#{calls := #{Call :: mfa() => true},
                      should_process_function_fun(),
                      is_standalone_fun_still_needed =>
                      is_standalone_fun_still_needed_fun(),
-                     add_module_info => boolean()}.
+                     add_module_info => boolean(),
+                     debug_info => boolean()}.
 %% Options to tune the extraction of an anonymous function.
 %%
 %% <ul>
@@ -251,10 +252,18 @@ fun((#{calls := #{Call :: mfa() => true},
 %% `module_info/1' functions should be added to the generated module. There
 %% are used by tracing and debugging tools in Erlang, but they take some space
 %% (about 140 bytes). Default is true.</li>
+%% <li>`debug_info': a boolean to indicate if details should be added to the
+%% `#standalone_fun.debug_info' field. See {@link debug_info()}.</li>
 %% </ul>
 
+-type debug_info() :: #{asm := asm()}.
+%% Optional details added to the standalone function record.
+%%
+%% They are only added if the `debug_info' {@link options()} is set to true.
+
 -export_type([standalone_fun/0,
-              options/0]).
+              options/0,
+              debug_info/0]).
 
 -record(state, {generated_module_name :: module() | undefined,
                 entrypoint :: mfa() | undefined,
@@ -404,7 +413,8 @@ to_standalone_fun3(
   #state{fun_info = #{module := Module,
                       name := Name,
                       arity := Arity,
-                      type := Type}} = State) ->
+                      type := Type},
+         options = Options} = State) ->
     case Type of
         local ->
             ensure_function_is_exported(Module, Name, Arity, Module);
@@ -443,12 +453,19 @@ to_standalone_fun3(
                     Asm = pass2(State4),
                     {GeneratedModuleName, Beam} = compile(Asm),
 
+                    DebugInfo = case maps:get(debug_info, Options, false) of
+                                    false ->
+                                        undefined;
+                                    true ->
+                                        #{asm => Asm}
+                                end,
                     StandaloneFun = #standalone_fun{
                                        module = GeneratedModuleName,
                                        beam = Beam,
                                        arity = Arity,
                                        literal_funs = LiteralFuns,
-                                       env = Env},
+                                       env = Env,
+                                       debug_info = DebugInfo},
                     cache_standalone_fun(State4, StandaloneFun),
                     {StandaloneFun, State4};
                 false ->
