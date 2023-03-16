@@ -2728,7 +2728,11 @@ to_actual_arg(#standalone_fun{arity = Arity} = StandaloneFun) ->
                       StandaloneFun,
                       [Arg1, Arg2, Arg3, Arg4, Arg5, Arg6, Arg7, Arg8, Arg9,
                        Arg10])
-            end
+            end;
+        _ ->
+            ?horus_misuse(
+               nested_fun_with_arity_too_great,
+               #{arity => Arity})
     end;
 to_actual_arg(List) when is_list(List) ->
     lists:map(
