@@ -1,0 +1,35 @@
+%% This Source Code Form is subject to the terms of the Mozilla Public
+%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%% file, You can obtain one at https://mozilla.org/MPL/2.0/.
+%%
+%% Copyright © 2021-2023 VMware, Inc. or its affiliates.  All rights reserved.
+%%
+
+-module(erlang_records).
+
+-include_lib("eunit/include/eunit.hrl").
+
+-include("test/helpers.hrl").
+
+-record(my_record, {field}).
+
+create_record_test() ->
+    StandaloneFun = ?make_standalone_fun(#my_record{field = ok}),
+    ?assertStandaloneFun(StandaloneFun),
+    ?assertEqual(#my_record{field = ok}, horus:exec(StandaloneFun, [])).
+
+update_record_test() ->
+    Record = helpers:ensure_not_optimized(#my_record{field = 1}),
+    StandaloneFun = ?make_standalone_fun(Record#my_record{field = 2}),
+    ?assertStandaloneFun(StandaloneFun),
+    ?assertEqual(#my_record{field = 2}, horus:exec(StandaloneFun, [])).
+
+match_record_test() ->
+    Record = helpers:ensure_not_optimized(#my_record{field = ok}),
+    StandaloneFun = ?make_standalone_fun(
+                       begin
+                           #my_record{field = Field} = Record,
+                           Field
+                       end),
+    ?assertStandaloneFun(StandaloneFun),
+    ?assertEqual(ok, horus:exec(StandaloneFun, [])).

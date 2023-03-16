@@ -1,0 +1,31 @@
+%% This Source Code Form is subject to the terms of the Mozilla Public
+%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%% file, You can obtain one at https://mozilla.org/MPL/2.0/.
+%%
+%% Copyright © 2021-2023 VMware, Inc. or its affiliates.  All rights reserved.
+%%
+
+-module(erlang_maps).
+
+-include_lib("eunit/include/eunit.hrl").
+
+-include("test/helpers.hrl").
+
+match_test() ->
+    StandaloneFun = ?make_standalone_fun(
+                       begin
+                           Map = #{a => b},
+                           #{a := Value} = Map,
+                           Value
+                       end),
+    ?assertStandaloneFun(StandaloneFun),
+    ?assertEqual(b, horus:exec(StandaloneFun, [])).
+
+update_test() ->
+    StandaloneFun = ?make_standalone_fun(
+                       begin
+                           Map = #{a => b},
+                           Map#{a => c}
+                       end),
+    ?assertStandaloneFun(StandaloneFun),
+    ?assertEqual(#{a => c}, horus:exec(StandaloneFun, [])).
