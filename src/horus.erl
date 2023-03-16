@@ -59,6 +59,7 @@
 -include_lib("stdlib/include/assert.hrl").
 
 -include("src/horus.hrl").
+-include("src/horus_error.hrl").
 
 -export([to_standalone_fun/1,
          to_standalone_fun/2,
@@ -706,7 +707,10 @@ handle_compilation_error(
    []} = Error) ->
     handle_validation_error(Asm, ValidationFailure, Error);
 handle_compilation_error(Asm, Error) ->
-    throw({compilation_failure, Error, Asm}).
+    ?horus_misuse(
+       compilation_failure,
+       #{error => Error,
+         asm => Asm}).
 
 handle_validation_error(
   Asm,
@@ -736,7 +740,10 @@ handle_validation_error(
     Location = {before, FailingInstruction},
     add_comments_and_retry(Asm, Error, FailingFun, Location, Comments);
 handle_validation_error(Asm, _ValidationFailure, Error) ->
-    throw({compilation_failure, Error, Asm}).
+    ?horus_misuse(
+       compilation_failure,
+       #{error => Error,
+         asm => Asm}).
 
 %% Looks up the comments for all variables within a branch up as they
 %% appear at the given instruction index.
@@ -825,7 +832,10 @@ add_comments_and_retry(
         compile(Asm1)
     catch
         throw:duplicate_annotations ->
-            throw({compilation_failure, Error, Asm})
+            ?horus_misuse(
+               compilation_failure,
+               #{error => Error,
+                 asm => Asm})
     end.
 
 add_comments_to_function(
@@ -1683,7 +1693,9 @@ erl_eval_fun_to_asm1(Module, Name, Arity, Clauses) ->
             %% and compiled before by `erl_eval' previously.
             do_disassemble(Beam);
         Error ->
-            throw({erl_eval_fun_compilation_failure, Error})
+            ?horus_misuse(
+               erl_eval_fun_compilation_failure,
+               #{error => Error})
     end.
 
 -spec disassemble_module(Module, State) -> {BeamFileRecord, State} when
@@ -1744,13 +1756,13 @@ disassemble_module1(Module, Checksum) when is_binary(Checksum) ->
                                                Module, Checksum, Beam),
                             {BeamFileRecord, Checksum};
                         false ->
-                            throw(
-                              {mismatching_module_checksum,
+                            ?horus_misuse(
+                               mismatching_module_checksum,
                                #{module => Module,
                                  checksum_from_fun => Checksum,
                                  checksum_on_disk => ActualChecksum,
                                  compile_info_from_fun => CompileInfoFromFun,
-                                 compile_info_on_disk => CompileInfoOnDisk}})
+                                 compile_info_on_disk => CompileInfoOnDisk})
                     end
             end
     end;
@@ -1781,8 +1793,12 @@ get_object_code(Module) ->
 
 do_get_object_code(Module) ->
     case code:get_object_code(Module) of
-        {Module, Beam, Filename} -> {Module, Beam, Filename};
-        error                    -> throw({module_not_found, Module})
+        {Module, Beam, Filename} ->
+            {Module, Beam, Filename};
+        error ->
+            ?horus_misuse(
+               module_not_found,
+               #{module => Module})
     end.
 
 do_disassemble_and_cache(Module, Checksum, Beam) ->
@@ -2270,8 +2286,10 @@ is_standalone_fun_still_needed(_State) ->
       State :: #state{}.
 
 %% TODO: Return all errors?
-process_errors(#state{errors = []})          -> ok;
-process_errors(#state{errors = [Error | _]}) -> throw(Error).
+process_errors(#state{errors = []}) ->
+    ok;
+process_errors(#state{errors = [Error | _]}) ->
+    throw(?horus_error(extraction_denied, #{error => Error})).
 
 %% -------------------------------------------------------------------
 %% Code processing [Pass 2]
