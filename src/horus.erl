@@ -58,7 +58,8 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
--include("src/horus.hrl").
+-include("include/horus.hrl").
+-include("src/horus_sf.hrl").
 -include("src/horus_error.hrl").
 
 -export([to_standalone_fun/1,

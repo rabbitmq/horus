@@ -9,8 +9,8 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include("src/horus.hrl").
--include("src/horus_error.hrl").
+-include("include/horus.hrl").
+-include("src/horus_sf.hrl").
 
 -dialyzer([{no_missing_calls,
             [unknown_function_1_test/0,

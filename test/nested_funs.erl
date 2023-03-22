@@ -9,7 +9,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include("src/horus_error.hrl").
+-include("include/horus.hrl").
 
 -include("test/helpers.hrl").
 

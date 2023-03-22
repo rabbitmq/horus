@@ -7,7 +7,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include("src/horus.hrl").
+-include("src/horus_sf.hrl").
 
 -define(make_standalone_fun(Expression),
         fun() ->

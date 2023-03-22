@@ -5,8 +5,14 @@
 %% Copyright © 2021-2023 VMware, Inc. or its affiliates.  All rights reserved.
 %%
 
+-ifndef(HORUS_SF_HRL).
+-define(HORUS_SF_HRL, true).
+
 %% Structure representing an anonymous function "extracted" as a compiled
 %% module for storage.
+%%
+%% IMPORTANT: When adding or removing fields to this record, be sure to update
+%% `include/horus.hrl'!
 -record(standalone_fun, {module :: module(),
                          beam :: binary(),
                          arity :: arity(),
@@ -14,6 +20,4 @@
                          env :: list(),
                          debug_info :: horus:debug_info() | undefined}).
 
--define(IS_STANDALONE_FUN(StandaloneFun),
-        (is_record(StandaloneFun, standalone_fun) orelse
-         is_function(StandaloneFun))).
+-endif. % defined(HORUS_SF_HRL).

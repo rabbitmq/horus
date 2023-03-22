@@ -5,13 +5,10 @@
 %% Copyright © 2022-2023 VMware, Inc. or its affiliates.  All rights reserved.
 %%
 
--define(
-   horus_error(Name, Props),
-   {horus, Name, Props}).
+-ifndef(HORUS_ERROR_HRL).
+-define(HORUS_ERROR_HRL, true).
 
--define(
-   horus_exception(Name, Props),
-   {horus_ex, Name, Props}).
+-include("include/horus.hrl").
 
 -define(
    horus_misuse(Exception),
@@ -24,3 +21,5 @@
 -define(
    horus_raise_misuse(Name, Props, Stacktrace),
    erlang:raise(error, ?horus_exception(Name, Props), Stacktrace)).
+
+-endif. % defined(HORUS_ERROR_HRL).
