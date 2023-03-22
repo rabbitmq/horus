@@ -42,7 +42,7 @@ standalone_fun_is_cached_test() ->
     StandaloneFun1 = horus:to_standalone_fun(Fun, Options),
     CacheEntry1 = persistent_term:get(Key, undefined),
     ?assertStandaloneFun(StandaloneFun1),
-    ?assertMatch(#{standalone_fun := StandaloneFun1}, CacheEntry1),
+    ?assertMatch(#{horus_fun := StandaloneFun1}, CacheEntry1),
     #{counters := Counters} = CacheEntry1,
     ?assertEqual(0, counters:get(Counters, 1)),
 
@@ -219,12 +219,12 @@ callback_options_impact_cache_key_test() ->
     ?assertNotEqual(Key1, Key2),
 
     CacheEntry1 = persistent_term:get(Key1, undefined),
-    ?assertMatch(#{standalone_fun := StandaloneFun1}, CacheEntry1),
+    ?assertMatch(#{horus_fun := StandaloneFun1}, CacheEntry1),
     #{counters := Counters1} = CacheEntry1,
     ?assertEqual(0, counters:get(Counters1, 1)),
 
     CacheEntry2 = persistent_term:get(Key2, undefined),
-    ?assertMatch(#{standalone_fun := StandaloneFun2}, CacheEntry2),
+    ?assertMatch(#{horus_fun := StandaloneFun2}, CacheEntry2),
     #{counters := Counters2} = CacheEntry2,
     ?assertEqual(0, counters:get(Counters2, 1)).
 

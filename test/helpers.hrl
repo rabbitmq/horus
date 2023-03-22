@@ -7,7 +7,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include("src/horus_sf.hrl").
+-include("src/horus_fun.hrl").
 
 -define(make_standalone_fun(Expression),
         fun() ->
@@ -16,7 +16,7 @@
         end()).
 
 -define(assertStandaloneFun(StandaloneFun),
-        ?assertMatch(#standalone_fun{}, StandaloneFun)).
+        ?assertMatch(#horus_fun{}, StandaloneFun)).
 
 -define(assertToFunError(Expected, Expression),
         ?assertError(Expected, ?make_standalone_fun(Expression))).

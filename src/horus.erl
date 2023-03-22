@@ -59,7 +59,7 @@
 -include_lib("stdlib/include/assert.hrl").
 
 -include("include/horus.hrl").
--include("src/horus_sf.hrl").
+-include("src/horus_fun.hrl").
 -include("src/horus_error.hrl").
 
 -export([to_standalone_fun/1,
@@ -224,7 +224,7 @@ fun((#{calls := #{Call :: mfa() => true},
 %% <li>`errors', a list of errors collected during the extraction.</li>
 %% </ul>
 
--type standalone_fun() :: #standalone_fun{} | fun().
+-type horus_fun() :: #horus_fun{} | fun().
 %% The result of an extraction, as returned by {@link to_standalone_fun/2}.
 %%
 %% It can be stored, passed between processes and Erlang nodes. To execute the
@@ -254,7 +254,7 @@ fun((#{calls := #{Call :: mfa() => true},
 %% are used by tracing and debugging tools in Erlang, but they take some space
 %% (about 140 bytes). Default is true.</li>
 %% <li>`debug_info': a boolean to indicate if details should be added to the
-%% `#standalone_fun.debug_info' field. See {@link debug_info()}.</li>
+%% `#horus_fun.debug_info' field. See {@link debug_info()}.</li>
 %% </ul>
 
 -type debug_info() :: #{asm := asm()}.
@@ -262,7 +262,7 @@ fun((#{calls := #{Call :: mfa() => true},
 %%
 %% They are only added if the `debug_info' {@link options()} is set to true.
 
--export_type([standalone_fun/0,
+-export_type([horus_fun/0,
               options/0,
               debug_info/0]).
 
@@ -281,7 +281,7 @@ fun((#{calls := #{Call :: mfa() => true},
                 function_in_progress :: atom() | undefined,
                 next_label = 1 :: label(),
                 label_map = #{} :: #{{module(), label()} => label()},
-                literal_funs = #{} :: #{fun() => standalone_fun()},
+                literal_funs = #{} :: #{fun() => horus_fun()},
 
                 errors = [] :: [any()],
                 options = #{} :: options()}).
@@ -296,7 +296,7 @@ fun((#{calls := #{Call :: mfa() => true},
 
 -spec to_standalone_fun(Fun) -> StandaloneFun when
       Fun :: fun(),
-      StandaloneFun :: standalone_fun().
+      StandaloneFun :: horus_fun().
 %% @doc Extracts the given anonymous function
 %%
 %% This is the same as:
@@ -315,7 +315,7 @@ to_standalone_fun(Fun) ->
 -spec to_standalone_fun(Fun, Options) -> StandaloneFun when
       Fun :: fun(),
       Options :: options(),
-      StandaloneFun :: standalone_fun().
+      StandaloneFun :: horus_fun().
 %% @doc Extracts the given anonymous function
 %%
 %% @param Fun the anonymous function to extract
@@ -331,7 +331,7 @@ to_standalone_fun(Fun, Options) ->
 -spec to_standalone_fun1(Fun, Options) -> {StandaloneFun, State} when
       Fun :: fun(),
       Options :: options(),
-      StandaloneFun :: standalone_fun(),
+      StandaloneFun :: horus_fun(),
       State :: #state{}.
 %% @private
 %% @hidden
@@ -349,7 +349,7 @@ to_standalone_fun1(Fun, Options) ->
 -spec to_standalone_fun2(Fun, State) -> {StandaloneFun, State} when
       Fun :: fun(),
       State :: #state{},
-      StandaloneFun :: standalone_fun().
+      StandaloneFun :: horus_fun().
 %% @doc Extracts the given anonymous function
 %%
 %% Parallel calls to handle a function that is not yet in the cache will
@@ -384,17 +384,17 @@ to_standalone_fun2(Fun, State) ->
     {StandaloneFun, State} | undefined when
       Fun :: fun(),
       State :: #state{},
-      StandaloneFun :: standalone_fun().
+      StandaloneFun :: horus_fun().
 %% @private
 %% @hidden
 
 to_cached_standalone_fun(Fun, State) ->
     case get_cached_standalone_fun(State) of
-        #standalone_fun{} = StandaloneFunWithoutEnv ->
+        #horus_fun{} = StandaloneFunWithoutEnv ->
             %% We need to set the environment for this specific call of the
-            %% anonymous function in the returned `#standalone_fun{}'.
+            %% anonymous function in the returned `#horus_fun{}'.
             {Env, State1} = to_standalone_env(State),
-            StandaloneFun = StandaloneFunWithoutEnv#standalone_fun{env = Env},
+            StandaloneFun = StandaloneFunWithoutEnv#horus_fun{env = Env},
             {StandaloneFun, State1};
         fun_kept ->
             {Fun, State};
@@ -405,7 +405,7 @@ to_cached_standalone_fun(Fun, State) ->
 -spec to_standalone_fun3(Fun, State) -> {StandaloneFun, State} when
       Fun :: fun(),
       State :: #state{},
-      StandaloneFun :: standalone_fun().
+      StandaloneFun :: horus_fun().
 %% @private
 %% @hidden
 
@@ -460,7 +460,7 @@ to_standalone_fun3(
                                     true ->
                                         #{asm => Asm}
                                 end,
-                    StandaloneFun = #standalone_fun{
+                    StandaloneFun = #horus_fun{
                                        module = GeneratedModuleName,
                                        beam = Beam,
                                        arity = Arity,
@@ -482,7 +482,7 @@ to_standalone_fun3(
 -spec to_embedded_standalone_fun(Fun, State) -> {StandaloneFun, State} when
       Fun :: fun(),
       State :: #state{},
-      StandaloneFun :: standalone_fun().
+      StandaloneFun :: horus_fun().
 %% @private
 %% @hidden
 
@@ -545,10 +545,10 @@ standalone_fun_cache_key(Module, Name, Arity, Checksum, Options) ->
 -spec get_cached_standalone_fun(State) -> Ret when
       State :: #state{},
       Ret :: StandaloneFun | fun_kept | undefined,
-      StandaloneFun :: standalone_fun().
+      StandaloneFun :: horus_fun().
 %% @doc Returns the cached standalone function if found.
 %%
-%% @returns a `standalone_fun()' if a corresponding standalone function was
+%% @returns a `horus_fun()' if a corresponding standalone function was
 %% found in the cache, a `fun_kept' atom if the anonymous function didn't need
 %% any processing and can be used directly, or `undefined' if there is no
 %% corresponding entry in the cache.
@@ -560,7 +560,7 @@ get_cached_standalone_fun(
   when Module =/= erl_eval ->
     Key = standalone_fun_cache_key(State),
     case persistent_term:get(Key, undefined) of
-        #{standalone_fun := StandaloneFunWithoutEnv,
+        #{horus_fun := StandaloneFunWithoutEnv,
           checksums := Checksums,
           counters := Counters} ->
             %% We want to make sure that all the modules used by the anonymous
@@ -603,7 +603,7 @@ get_cached_standalone_fun(_State) ->
     undefined.
 
 -spec cache_standalone_fun(StandaloneFun, State) -> ok when
-      StandaloneFun :: standalone_fun() | fun_kept,
+      StandaloneFun :: horus_fun() | fun_kept,
       State :: #state{}.
 %% @private
 
@@ -641,7 +641,7 @@ cache_standalone_fun(
     Counters = counters:new(1, [write_concurrency]),
 
     case StandaloneFun of
-        #standalone_fun{} ->
+        #horus_fun{} ->
             %% The standalone function is stored in the cache without its
             %% environment (the variable bindings in the anonymous function).
             %% They are given for a specific call of this function and may
@@ -650,9 +650,9 @@ cache_standalone_fun(
             %%
             %% The environment is set by the caller of
             %% `get_cached_standalone_fun()'.
-            StandaloneFunWithoutEnv = StandaloneFun#standalone_fun{env = []},
+            StandaloneFunWithoutEnv = StandaloneFun#horus_fun{env = []},
 
-            Value = #{standalone_fun => StandaloneFunWithoutEnv,
+            Value = #{horus_fun => StandaloneFunWithoutEnv,
                       checksums => Checksums1,
                       options => Options,
                       counters => Counters},
@@ -910,7 +910,7 @@ merge_comments(Comments, ExistingComments) ->
     end, Comments).
 
 -spec exec(StandaloneFun, Args) -> Ret when
-      StandaloneFun :: standalone_fun(),
+      StandaloneFun :: horus_fun(),
       Args :: [any()],
       Ret :: any().
 %% @doc Executes a previously extracted anonymous function.
@@ -927,7 +927,7 @@ merge_comments(Comments, ExistingComments) ->
 %% @returns the return value of the extracted function.
 
 exec(
-  #standalone_fun{module = Module,
+  #horus_fun{module = Module,
                   arity = Arity,
                   literal_funs = LiteralFuns,
                   env = Env} = StandaloneFun,
@@ -941,17 +941,17 @@ exec(
       LiteralFuns),
     Env1 = to_actual_arg(Env),
     erlang:apply(Module, ?SF_ENTRYPOINT, Args ++ Env1);
-exec(#standalone_fun{} = StandaloneFun, Args) ->
+exec(#horus_fun{} = StandaloneFun, Args) ->
     error({badarity, {StandaloneFun, Args}});
 exec(Fun, Args) ->
     erlang:apply(Fun, Args).
 
 -spec load_standalone_fun(StandaloneFun) -> ok when
-      StandaloneFun :: standalone_fun().
+      StandaloneFun :: horus_fun().
 %% @private
 
 load_standalone_fun(
-  #standalone_fun{module = Module, beam = Beam} = StandaloneFun) ->
+  #horus_fun{module = Module, beam = Beam} = StandaloneFun) ->
     case code:is_loaded(Module) of
         false ->
             case code:load_binary(Module, ?MODULE_STRING, Beam) of
@@ -960,7 +960,7 @@ load_standalone_fun(
                 {error, _} = Error ->
                     ?horus_misuse(
                        invalid_generated_module,
-                       #{standalone_fun => StandaloneFun,
+                       #{horus_fun => StandaloneFun,
                          error => Error})
             end;
         _ ->
@@ -968,11 +968,11 @@ load_standalone_fun(
     end.
 
 -spec to_fun(StandaloneFun) -> Fun when
-      StandaloneFun :: standalone_fun(),
+      StandaloneFun :: horus_fun(),
       Fun :: fun().
 %% @private
 
-to_fun(#standalone_fun{module = Module, arity = Arity} = StandaloneFun) ->
+to_fun(#horus_fun{module = Module, arity = Arity} = StandaloneFun) ->
     load_standalone_fun(StandaloneFun),
     erlang:make_fun(Module, run, Arity);
 to_fun(Fun) when is_function(Fun) ->
@@ -1388,9 +1388,9 @@ pass1_process_instructions(
     %% This `move' instruction references a lambda: we must extract it like
     %% lambas present in the environment. We keep track of all extracted
     %% literal funs in the `literal_funs' field of the state record. This is
-    %% used to create the final `#standalone_fun{}' at the end.
+    %% used to create the final `#horus_fun{}' at the end.
     %%
-    %% Note that `literal_funs` can contain both `#standalone_fun{}' records
+    %% Note that `literal_funs` can contain both `#horus_fun{}' records
     %% and lambdas. The latter is possible if the function doesn't need
     %% extraction.
     #state{literal_funs = LiteralFuns} = State1,
@@ -1408,7 +1408,7 @@ pass1_process_instructions(
     %% instruction.
     #state{literal_funs = #{Fun := StandaloneFun1}} = State3,
     Fun1 = case StandaloneFun1 of
-               #standalone_fun{module = Module, arity = Arity} ->
+               #horus_fun{module = Module, arity = Arity} ->
                    %% The lambda was extracted. Here we simply construct the
                    %% reference to the entrypoint function in the generated
                    %% module. It doesn't matter that the module is not loaded.
@@ -2715,7 +2715,7 @@ to_standalone_arg(Fun, State) when is_function(Fun) ->
 to_standalone_arg(Term, State) ->
     {Term, State}.
 
-to_actual_arg(#standalone_fun{arity = Arity} = StandaloneFun) ->
+to_actual_arg(#horus_fun{arity = Arity} = StandaloneFun) ->
     case Arity of
         0 ->
             fun() -> exec(StandaloneFun, []) end;

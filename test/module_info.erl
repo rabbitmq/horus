@@ -18,7 +18,7 @@ with_module_info_test() ->
     ?assertStandaloneFun(StandaloneFun),
     ?assertMatch(ok, horus:exec(StandaloneFun, [])),
 
-    #standalone_fun{module = Module} = StandaloneFun,
+    #horus_fun{module = Module} = StandaloneFun,
     ?assert(erlang:function_exported(Module, module_info, 0)),
     ?assert(erlang:function_exported(Module, module_info, 1)),
     ?assertEqual(erlang:get_module_info(Module), Module:module_info()).
@@ -30,6 +30,6 @@ without_module_info_test() ->
     ?assertStandaloneFun(StandaloneFun),
     ?assertMatch(ok, horus:exec(StandaloneFun, [])),
 
-    #standalone_fun{module = Module} = StandaloneFun,
+    #horus_fun{module = Module} = StandaloneFun,
     ?assertNot(erlang:function_exported(Module, module_info, 0)),
     ?assertNot(erlang:function_exported(Module, module_info, 1)).

@@ -10,7 +10,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include("include/horus.hrl").
--include("src/horus_sf.hrl").
+-include("src/horus_fun.hrl").
 
 -dialyzer([{no_missing_calls,
             [unknown_function_1_test/0,
@@ -85,7 +85,7 @@ exec_wrong_arity_test() ->
        horus:exec(StandaloneFun, [])).
 
 exec_invalid_generated_module_test() ->
-    StandaloneFun = #standalone_fun{
+    StandaloneFun = #horus_fun{
                        module = module_not_loaded,
                        beam = <<"invalid">>,
                        arity = 0,
@@ -94,6 +94,6 @@ exec_invalid_generated_module_test() ->
     ?assertError(
        ?horus_exception(
           invalid_generated_module,
-          #{standalone_fun := StandaloneFun,
+          #{horus_fun := StandaloneFun,
             error := {error, badfile}}),
        horus:exec(StandaloneFun, [])).

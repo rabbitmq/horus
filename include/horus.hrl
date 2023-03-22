@@ -8,16 +8,20 @@
 -ifndef(HORUS_HRL).
 -define(HORUS_HRL, true).
 
--define(IS_HORUS_EXTRACTED_FUN(Fun),
+-define(IS_HORUS_FUN(Fun),
         (is_function(Fun) orelse ?IS_HORUS_STANDALONE_FUN(Fun))).
 
--define(IS_HORUS_STANDALONE_FUN(StandaloneFun),
-        (is_tuple(StandaloneFun) andalso
-         size(StandaloneFun) =:= 7 andalso
-         element(1, StandaloneFun) =:= standalone_fun)).
+-define(IS_HORUS_STANDALONE_FUN(Fun),
+        (is_tuple(Fun) andalso
+         size(Fun) =:= 7 andalso
+         element(1, Fun) =:= horus_fun)).
 
--define(HORUS_SF_ARITY(StandaloneFun),
-        element(4, StandaloneFun)).
+-define(IS_HORUS_STANDALONE_FUN(Fun, Arity),
+        (?IS_HORUS_STANDALONE_FUN(Fun) andalso
+         ?HORUS_STANDALONE_FUN_ARITY(Fun) =:= Arity)).
+
+-define(HORUS_STANDALONE_FUN_ARITY(Fun),
+        element(4, Fun)).
 
 -define(horus_error(Name, Props), {horus, Name, Props}).
 -define(horus_exception(Name, Props), {horus_ex, Name, Props}).

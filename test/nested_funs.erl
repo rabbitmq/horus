@@ -23,77 +23,77 @@ fun0_in_fun_env_test() ->
     Fun = make_fun(0),
     StandaloneFun = ?make_standalone_fun(Fun()),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
 fun1_in_fun_env_test() ->
     Fun = make_fun(1),
     StandaloneFun = ?make_standalone_fun(Fun(1)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
 fun2_in_fun_env_test() ->
     Fun = make_fun(2),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
 fun3_in_fun_env_test() ->
     Fun = make_fun(3),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
 fun4_in_fun_env_test() ->
     Fun = make_fun(4),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
 fun5_in_fun_env_test() ->
     Fun = make_fun(5),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
 fun6_in_fun_env_test() ->
     Fun = make_fun(6),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5, 6)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
 fun7_in_fun_env_test() ->
     Fun = make_fun(7),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5, 6, 7)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
 fun8_in_fun_env_test() ->
     Fun = make_fun(8),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5, 6, 7, 8)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
 fun9_in_fun_env_test() ->
     Fun = make_fun(9),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5, 6, 7, 8, 9)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
 fun10_in_fun_env_test() ->
     Fun = make_fun(10),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
 fun11_in_fun_env_test() ->
@@ -102,7 +102,7 @@ fun11_in_fun_env_test() ->
     StandaloneFun = ?make_standalone_fun(
                        Fun(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#standalone_fun.env),
+    ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertError(
        ?horus_exception(
           nested_fun_with_arity_too_great,
