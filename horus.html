@@ -90,6 +90,13 @@ permitted, throws an exception otherwise.</p>
           (Unknown)      -&gt; throw({unknown_instruction, Unknown})
       end.</code></pre></p>
 
+<h3 class="typedecl"><a name="type-horus_fun">horus_fun()</a></h3>
+<p><code>horus_fun() = #horus_fun{module = module(), beam = binary(), arity = arity(), literal_funs = [<a href="/home/runner/work/horus/horus/doc/horus.html#type-horus_fun">horus:horus_fun()</a>], env = list(), debug_info = <a href="/home/runner/work/horus/horus/doc/horus.html#type-debug_info">horus:debug_info()</a> | undefined} | function()</code></p>
+<p><p>  The result of an extraction, as returned by <a docgen-rel="seemfa" docgen-href="#to_standalone_fun/2" href="#to_standalone_fun-2"><code>to_standalone_fun/2</code></a>.</p>
+ 
+  It can be stored, passed between processes and Erlang nodes. To execute the
+  extracted function, simply call <a docgen-rel="seemfa" docgen-href="#exec/2" href="#exec-2"><code>exec/2</code></a> which works like <a docgen-rel="seemfa" docgen-href="erlang#apply/2" href="erlang.html#apply-2"><code>erlang:apply/2</code></a>.</p>
+
 <h3 class="typedecl"><a name="type-is_standalone_fun_still_needed_fun">is_standalone_fun_still_needed_fun()</a></h3>
 <p><code>is_standalone_fun_still_needed_fun() = fun((#{calls := #{Call::mfa() =&gt; true}, errors := [Error::any()]}) -&gt; IsNeeded::boolean())</code></p>
 <p><p>  Function which evaluates if the extracted function is still relevant in the  
@@ -123,7 +130,7 @@ end. It returns true if it is, false otherwise.</p>
   are used by tracing and debugging tools in Erlang, but they take some space
   (about 140 bytes). Default is true.</li>
   <li><code>debug_info</code>: a boolean to indicate if details should be added to the
-  <code>#standalone_fun.debug_info</code> field. See <a docgen-rel="seetype" docgen-href="#debug_info/0" href="#type-debug_info"><code>debug_info()</code></a>.</li>
+  <code>#horus_fun.debug_info</code> field. See <a docgen-rel="seetype" docgen-href="#debug_info/0" href="#type-debug_info"><code>debug_info()</code></a>.</li>
   </ul></p>
 
 <h3 class="typedecl"><a name="type-should_process_function_fun">should_process_function_fun()</a></h3>
@@ -143,13 +150,6 @@ followed, false otherwise.</p>
               erlang:function_exported(Module, Name, Arity)
       end.</code></pre></p>
 
-<h3 class="typedecl"><a name="type-standalone_fun">standalone_fun()</a></h3>
-<p><code>standalone_fun() = #standalone_fun{module = module(), beam = binary(), arity = arity(), literal_funs = [<a href="/home/runner/work/horus/horus/doc/horus.html#type-standalone_fun">horus:standalone_fun()</a>], env = list(), debug_info = <a href="/home/runner/work/horus/horus/doc/horus.html#type-debug_info">horus:debug_info()</a> | undefined} | function()</code></p>
-<p><p>  The result of an extraction, as returned by <a docgen-rel="seemfa" docgen-href="#to_standalone_fun/2" href="#to_standalone_fun-2"><code>to_standalone_fun/2</code></a>.</p>
- 
-  It can be stored, passed between processes and Erlang nodes. To execute the
-  extracted function, simply call <a docgen-rel="seemfa" docgen-href="#exec/2" href="#exec-2"><code>exec/2</code></a> which works like <a docgen-rel="seemfa" docgen-href="erlang#apply/2" href="erlang.html#apply-2"><code>erlang:apply/2</code></a>.</p>
-
 <h2><a name="index">Function Index</a></h2>
 <table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#to_standalone_fun-1">to_standalone_fun/1</a></td><td>Extracts the given anonymous function.</td></tr>
 <tr><td valign="top"><a href="#to_standalone_fun-2">to_standalone_fun/2</a></td><td>Extracts the given anonymous function.</td></tr>
@@ -161,7 +161,7 @@ followed, false otherwise.</p>
 <h3 class="function"><a name="to_standalone_fun-1">to_standalone_fun/1</a></h3>
 <div class="spec">
 <p><code>to_standalone_fun(Fun) -&gt; StandaloneFun</code>
-<ul class="definitions"><li><code>Fun = function()</code></li><li><code>StandaloneFun = <a href="#type-standalone_fun">standalone_fun()</a></code></li></ul></p>
+<ul class="definitions"><li><code>Fun = function()</code></li><li><code>StandaloneFun = <a href="#type-horus_fun">horus_fun()</a></code></li></ul></p>
 <p><code>Fun</code>: the anonymous function to extract
  <br>
 </p>
@@ -176,7 +176,7 @@ followed, false otherwise.</p>
 <h3 class="function"><a name="to_standalone_fun-2">to_standalone_fun/2</a></h3>
 <div class="spec">
 <p><code>to_standalone_fun(Fun, Options) -&gt; StandaloneFun</code>
-<ul class="definitions"><li><code>Fun = function()</code></li><li><code>Options = <a href="#type-options">options()</a></code></li><li><code>StandaloneFun = <a href="#type-standalone_fun">standalone_fun()</a></code></li></ul></p>
+<ul class="definitions"><li><code>Fun = function()</code></li><li><code>Options = <a href="#type-options">options()</a></code></li><li><code>StandaloneFun = <a href="#type-horus_fun">horus_fun()</a></code></li></ul></p>
 <p><code>Fun</code>: the anonymous function to extract<br>
 <code>Options</code>: a map of options
  <br>
@@ -189,7 +189,7 @@ followed, false otherwise.</p>
 <h3 class="function"><a name="exec-2">exec/2</a></h3>
 <div class="spec">
 <p><code>exec(StandaloneFun, Args) -&gt; Ret</code>
-<ul class="definitions"><li><code>StandaloneFun = <a href="#type-standalone_fun">standalone_fun()</a></code></li><li><code>Args = [any()]</code></li><li><code>Ret = any()</code></li></ul></p>
+<ul class="definitions"><li><code>StandaloneFun = <a href="#type-horus_fun">horus_fun()</a></code></li><li><code>Args = [any()]</code></li><li><code>Ret = any()</code></li></ul></p>
 <p><code>StandaloneFun</code>: the extracted function as returned by <a docgen-rel="seemfa" docgen-href="#to_standalone_fun/2" href="#to_standalone_fun-2"><code>to_standalone_fun/2</code></a>.<br>
 <code>Args</code>: the list of arguments to pass to the extracted function.
  <br>
