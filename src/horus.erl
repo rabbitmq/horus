@@ -266,12 +266,14 @@ fun((#{calls := #{Call :: mfa() => true},
               options/0,
               debug_info/0]).
 
+-type all_calls_map() :: #{mfa() => true}.
+
 -record(state, {generated_module_name :: module() | undefined,
                 entrypoint :: mfa() | undefined,
                 checksums = #{} :: #{module() => binary()},
                 fun_info :: fun_info(),
                 calls = #{} :: #{mfa() => true},
-                all_calls = #{} :: #{mfa() => true},
+                all_calls = #{} :: all_calls_map(),
                 functions = #{} :: #{mfa() => #function{}},
 
                 lines_in_progress :: #lines{} | undefined,
@@ -390,12 +392,13 @@ to_standalone_fun2(Fun, State) ->
 
 to_cached_standalone_fun(Fun, State) ->
     case get_cached_standalone_fun(State) of
-        #horus_fun{} = StandaloneFunWithoutEnv ->
+        {#horus_fun{} = StandaloneFunWithoutEnv, AllCalls} ->
             %% We need to set the environment for this specific call of the
             %% anonymous function in the returned `#horus_fun{}'.
-            {Env, State1} = to_standalone_env(State),
+            State1 = merge_all_calls_maps(AllCalls, State),
+            {Env, State2} = to_standalone_env(State1),
             StandaloneFun = StandaloneFunWithoutEnv#horus_fun{env = Env},
-            {StandaloneFun, State1};
+            {StandaloneFun, State2};
         fun_kept ->
             {Fun, State};
         undefined ->
@@ -489,17 +492,26 @@ to_standalone_fun3(
 to_embedded_standalone_fun(
   Fun,
   #state{options = Options,
-         all_calls = AllCalls,
          errors = Errors} = State)
   when is_function(Fun) ->
     {StandaloneFun, InnerState} = to_standalone_fun1(Fun, Options),
     #state{all_calls = InnerAllCalls,
            errors = InnerErrors} = InnerState,
-    AllCalls1 = maps:merge(AllCalls, InnerAllCalls),
     Errors1 = Errors ++ InnerErrors,
-    State1 = State#state{all_calls = AllCalls1,
-                         errors = Errors1},
-    {StandaloneFun, State1}.
+    State1 = merge_all_calls_maps(InnerAllCalls, State),
+    State2 = State1#state{errors = Errors1},
+    {StandaloneFun, State2}.
+
+-spec merge_all_calls_maps(AllCalls, State) -> NewState when
+      AllCalls :: all_calls_map(),
+      State :: #state{},
+      NewState :: #state{}.
+%% @private
+
+merge_all_calls_maps(InnerAllCalls, #state{all_calls = AllCalls} = State) ->
+    AllCalls1 = maps:merge(AllCalls, InnerAllCalls),
+    State1 = State#state{all_calls = AllCalls1},
+    State1.
 
 -spec standalone_fun_cache_key(State) -> Key when
       State :: #state{},
@@ -544,7 +556,7 @@ standalone_fun_cache_key(Module, Name, Arity, Checksum, Options) ->
 
 -spec get_cached_standalone_fun(State) -> Ret when
       State :: #state{},
-      Ret :: StandaloneFun | fun_kept | undefined,
+      Ret :: {StandaloneFun, all_calls_map()} | fun_kept | undefined,
       StandaloneFun :: horus_fun().
 %% @doc Returns the cached standalone function if found.
 %%
@@ -562,6 +574,7 @@ get_cached_standalone_fun(
     case persistent_term:get(Key, undefined) of
         #{horus_fun := StandaloneFunWithoutEnv,
           checksums := Checksums,
+          all_calls := AllCalls,
           counters := Counters} ->
             %% We want to make sure that all the modules used by the anonymous
             %% function were not updated since it was stored in the cache.
@@ -583,7 +596,7 @@ get_cached_standalone_fun(
             if
                 SameModules ->
                     counters:add(Counters, 1, 1),
-                    StandaloneFunWithoutEnv;
+                    {StandaloneFunWithoutEnv, AllCalls};
                 true ->
                     undefined
             end;
@@ -608,10 +621,17 @@ get_cached_standalone_fun(_State) ->
 %% @private
 
 cache_standalone_fun(
-  #state{checksums = Checksums, options = Options} = State,
+  #state{checksums = Checksums,
+         options = Options,
+         all_calls = AllCalls} = State,
   StandaloneFun) ->
     %% We include the options in the cached value. This is useful when the
     %% callbacks change for the same anonymous function.
+    %%
+    %% We also include the `all_calls' map because if this function is in
+    %% another function environment, its `all_calls' map will be merged with
+    %% the calling function's one in `to_embedded_standalone_fun/2'. This
+    %% information is then used by `is_standalone_fun_still_needed/1'.
     Checksums1 = maps:fold(
                    fun (_Key, Fun, Acc) when is_function(Fun) ->
                            Info = maps:from_list(erlang:fun_info(Fun)),
@@ -655,6 +675,7 @@ cache_standalone_fun(
             Value = #{horus_fun => StandaloneFunWithoutEnv,
                       checksums => Checksums1,
                       options => Options,
+                      all_calls => AllCalls,
                       counters => Counters},
 
             %% TODO: We need to add some memory management here to clear the
