@@ -4,6 +4,7 @@
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <title>The Horus library</title>
 <link rel="stylesheet" type="text/css" href="edoc-extensions.css" title="EDoc">
+<link rel="icon" href="horus-favicon.svg" type="image/svg+xml">
 </head>
 <body class="markdown-body language-erlang">
 <script src="prism.js"></script>
@@ -13,9 +14,165 @@
 <p><b>Version:</b> Development branch
 </p>
 <p><b>Authors:</b> Jean-Sébastien Pédron (<a href="mailto:jean-sebastien@rabbitmq.com"><tt>jean-sebastien@rabbitmq.com</tt></a>), The RabbitMQ team (<a href="mailto:info@rabbitmq.com"><tt>info@rabbitmq.com</tt></a>).</p>
-
+<p>
 Horus is a library that extracts an anonymous function's code and creates a
-standalone version of it in a new module at runtime.
+standalone version of it in a new module at runtime.</p>
+
+<p>The goal is to have a storable and transferable function which does not depend
+on the availability of the module that defined it.</p>
+
+<h3><a name="How_does_it_work?">How does it work?</a></h3>
+
+<p>To achieve that goal, Horus extracts the assembly code of the anonymous
+function and creates a standalone Erlang module based on it. This module can be
+stored, transfered to another Erlang node and executed anywhere without the
+presence of the initial anonymous function's module.</p>
+
+<h4><a name="The_extraction_process">The extraction process</a></h4>
+
+Here is what it does in more details:
+<ol>
+<li>The assembly code of the module hosting the anonymous function is
+extracted.</li>
+<li>The anonymous function code is located inside that assembly code.</li>
+<li>Optionaly, the code is analyzed to determine if it matches constraints
+defined by the caller. For instance, it does not perform any forbidden
+operations like:
+<ul>
+<li>sending or receiving inter-process messages</li>
+<li>accessing files or network connections</li>
+<li>calling forbidden functions</li>
+</ul></li>
+<li>Based on the listed function calls, the same steps are repeated for all of
+them (extract, verify, list calls).</li>
+<li>Optionaly, once all the assembly code to have a standalone anonymous
+function is collected, it checks if it is still needed by the caller.</li>
+<li>Finally, an Erlang module is compiled.</li>
+</ol>
+
+<h4><a name="Caching">Caching</a></h4>
+
+<p>Horus caches assembly code and generated modules. This avoids the need to call
+the code server or the compiler again and again.</p>
+
+<p>Note that at this point, the cache is never invalidated and purged. Memory
+management of the cache will be a future improvement.</p>
+
+<h4><a name="Extraction_and_code_reloading">Extraction and code reloading</a></h4>
+
+<p>In the process, Horus pays attention to modules' checksums. Therefore, if a
+module is reloaded during a code upgrade, a new standalone function will be
+generated from the apparently same anonymous function. This applies to all
+modules called by that anonymous function.</p>
+
+<h4><a name="The_anonymous_function_environment">The anonymous function environment</a></h4>
+
+<p>It's possible for an anonymous function to take inputs from arguments of
+course, but also from the scope it is defined in:</p>
+
+<pre><code>Pid = self(),
+Fun = fun() -&gt;
+          Pid ! stop
+      end,</code></pre>
+
+It is even possible to take another anonymous function from the scope:
+<pre><code>InnerFun = fun(Ret) -&gt;
+               {ok, Ret}
+           end,
+OuterFun = fun(Ret) -&gt;
+               InnerFun(Ret)
+           end,</code></pre>
+
+<p>These variables are "stored" in the anonymous function's environment by Erlang.
+They are also taken into account by Horus during the extraction. In particular,
+if the environment references another anonymous function, it will be extracted
+too.</p>
+
+<p>The returned standalone function contains a standalone copy of the environment.
+Thus you don't have to worry about.</p>
+
+<p>However, that environment is not part of the generated module. Therefore, a
+single module will generated for each of <code>InnerFun</code> and <code>OuterFun</code> from the
+example above.</p>
+
+<p>This avoids the multiplication of generated modules which are loaded at
+execution time. With this distinction, a single module is generated and loaded.
+The environment stored in the returned standalone function is then passed to
+that generated module during execution.</p>
+
+<h3><a name="Example_of_a_generated_module">Example of a generated module</a></h3>
+
+<p>Let's take the simplest anonymous function:</p>
+
+<pre><code>fun() -&gt;
+    ok
+end</code></pre>
+
+<p>Horus generates the following assembly form:</p>
+
+<pre><code>{
+ %% This is the generated module name. It is created from the name and
+ %% origin of the extraction function and a hash. The hash permits
+ %% several copies of the same function after code reloading.
+ 'horus__erl_eval__-expr/6-fun-2-__97040876',
+
+ %% This is the list of exported functions. `run/0' is the entry point
+ %% corresponding to the extracted function and has the same arity (or
+ %% perhaps a greater arity if the anonymous function took variables
+ %% from the scope).
+ %%
+ %% There could be other non-exported functions in the module corresponding
+ %% to the functions called by the top-level anonymous function.
+ [{run,0},
+  {module_info,0},
+  {module_info,1}],
+
+ %% These are module attributes. Things like `-dialyzer(...).'. There are
+ %% none in the generated module.
+ [],
+
+ %% The actual functions present in the module at last!
+ [
+  {function,
+   run, %% The name of the function.
+   0,   %% Its arity.
+   2,   %% The label where the code starts.
+   [
+    %% Some metadata for this function:
+    {label,1},
+    {func_info,{atom,'horus__erl_eval__-expr/6-fun-2-__97040876'},
+     {atom,run},
+     0},
+    %% The function body for all its clauses.
+    {label,2},
+    {move,{atom,ok},{x,0}},
+    return]},
+
+  %% The `module/{0,1}' functions are added so the generated module is
+  %% compatible with debuggers.
+  {function,module_info,0,4,
+   [{label,3},
+    {line,[{location,"horus.erl",0}]},
+    {func_info,{atom,'horus__erl_eval__-expr/6-fun-2-__97040876'},
+     {atom,module_info},
+     0},
+    {label,4},
+    {move,{atom,'horus__erl_eval__-expr/6-fun-2-__97040876'},
+     {x,0}},
+    {call_ext_only,1,{extfunc,erlang,get_module_info,1}}]},
+
+  {function,module_info,1,6,
+   [{label,5},
+    {line,[{location,"horus.erl",0}]},
+    {func_info,{atom,'horus__erl_eval__-expr/6-fun-2-__97040876'},
+     {atom,module_info},
+     1},
+    {label,6},
+    {move,{x,0},{x,1}},
+    {move,{atom,'horus__erl_eval__-expr/6-fun-2-__97040876'},
+     {x,0}},
+    {call_ext_only,2,{extfunc,erlang,get_module_info,2}}]}],
+ 7}}}</code></pre>
 
 <hr>
 <div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>

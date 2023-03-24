@@ -4,16 +4,17 @@
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <title>Module horus</title>
 <link rel="stylesheet" type="text/css" href="edoc-extensions.css" title="EDoc">
+<link rel="icon" href="horus-favicon.svg" type="image/svg+xml">
 </head>
 <body class="markdown-body language-erlang"><script src="prism.js"></script>
 <div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
 <hr>
 
 <h1>Module horus</h1>
-<ul class="index"><li><a href="#description">Description</a></li><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>Anonymous function extraction private API.
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>Library to create standalone modules from anonymous functions.
 
 
-<h2><a name="description">Description</a></h2><p>Anonymous function extraction private API.</p>
+<h2><a name="description">Description</a></h2><p>Library to create standalone modules from anonymous functions.</p>
  
   <p>This module is responsible for extracting the code of an anonymous function.  
 The goal is to be able to store the extracted function and execute it later,  
@@ -41,8 +42,8 @@ unmodified.</p>
  
   <p>Once the code was extracted and verified, a new module is generated as an
   "assembly form", ready to be compiled again to an executable module. The
-  generated module has a single <code>run/N</code> function. This function contains the  
-code of the extracted anonymous function.</p>
+  generated module has a single <code>run/N</code> exported function. This function  
+contains the code of the extracted anonymous function.</p>
  
   <p>Because this process works on the assembly code, it means that if the  
 initial module hosting the anonymous function was compiled with Erlang  
@@ -64,11 +65,13 @@ to older runtimes.</p>
 
 <h3 class="typedecl"><a name="type-asm">asm()</a></h3>
 <p><code>asm() = {module(), [{atom(), arity()}], [], [#function{name = atom(), arity = byte(), entry = <a href="/home/runner/work/horus/stdlib/doc/beam_lib.html#type-label">beam_lib:label()</a>, code = [<a href="#type-beam_instr">beam_instr()</a>]}], <a href="#type-label">label()</a>}</code></p>
-
+<p><p>  The assembly form passed to the compiler.</p>
+ 
+  It should be exported by the compiler application ideally.</p>
 
 <h3 class="typedecl"><a name="type-beam_instr">beam_instr()</a></h3>
 <p><code>beam_instr() = atom() | tuple()</code></p>
-
+<p>  A beam assembly instruction.</p>
 
 <h3 class="typedecl"><a name="type-debug_info">debug_info()</a></h3>
 <p><code>debug_info() = #{asm := <a href="#type-asm">asm()</a>}</code></p>
@@ -111,7 +114,9 @@ end. It returns true if it is, false otherwise.</p>
 
 <h3 class="typedecl"><a name="type-label">label()</a></h3>
 <p><code>label() = pos_integer()</code></p>
-
+<p><p>  a beam assembly label.</p>
+ 
+  Other assembly instructions can jump to this label.</p>
 
 <h3 class="typedecl"><a name="type-options">options()</a></h3>
 <p><code>options() = #{ensure_instruction_is_permitted =&gt; <a href="#type-ensure_instruction_is_permitted_fun">ensure_instruction_is_permitted_fun()</a>, should_process_function =&gt; <a href="#type-should_process_function_fun">should_process_function_fun()</a>, is_standalone_fun_still_needed =&gt; <a href="#type-is_standalone_fun_still_needed_fun">is_standalone_fun_still_needed_fun()</a>, add_module_info =&gt; boolean(), debug_info =&gt; boolean()}</code></p>
@@ -167,7 +172,7 @@ followed, false otherwise.</p>
 </p>
 <p>returns: a standalone function record or the same anonymous function if no
   extraction was needed.</p>
-</div><p><p>Extracts the given anonymous function</p>
+</div><p><p>Extracts the given anonymous function.</p>
  
   This is the same as:
   <pre><code>horus:to_standalone_fun(Fun, #{}).</code></pre>
@@ -183,7 +188,21 @@ followed, false otherwise.</p>
 </p>
 <p>returns: a standalone function record or the same anonymous function if no
   extraction was needed.</p>
-</div><p>Extracts the given anonymous function
+</div><p><p>Extracts the given anonymous function.</p>
+ 
+  Example of successful extraction:
+  <pre><code>Fun = fun(Term) -&gt;
+          io:format(standard_error, "~p~n", [Term])
+      end,
+StandaloneFun = horus:to_standalone_fun(Fun),
+ 
+horus:exec(StandaloneFun, [calendar:local_time()]).</code></pre>
+ 
+  Example of an error, trying to export a non-existing function:
+  <pre><code>horus:to_standalone_fun(fun not_a_module:not_a_function/0).
+ 
+%% ** exception throw: {horus, call_to_unexported_function,
+%%                             #{mfa =&gt; {not_a_module, not_a_function, 0}}}</code></pre>
  </p>
 
 <h3 class="function"><a name="exec-2">exec/2</a></h3>
@@ -200,7 +219,15 @@ followed, false otherwise.</p>
   <p>This is the equivalent of <a docgen-rel="seemfa" docgen-href="erlang#apply/2" href="erlang.html#apply-2"><code>erlang:apply/2</code></a> but it supports extracted  
 anonymous functions.</p>
  
-  The list of <code>Args</code> must match the arity of the anonymous function.
+  <p>The list of <code>Args</code> must match the arity of the anonymous function.</p>
+ 
+  Example:
+  <pre><code>Fun = fun(Term) -&gt;
+          io:format(standard_error, "~p~n", [Term])
+      end,
+StandaloneFun = horus:to_standalone_fun(Fun),
+ 
+horus:exec(StandaloneFun, [calendar:local_time()]).</code></pre>
  </p>
 <hr>
 
