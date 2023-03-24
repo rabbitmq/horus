@@ -5,7 +5,7 @@
 %% Copyright © 2021-2023 VMware, Inc. or its affiliates.  All rights reserved.
 %%
 
-%% @doc Anonymous function extraction private API.
+%% @doc Library to create standalone modules from anonymous functions.
 %%
 %% This module is responsible for extracting the code of an anonymous function.
 %% The goal is to be able to store the extracted function and execute it later,
@@ -33,8 +33,8 @@
 %%
 %% Once the code was extracted and verified, a new module is generated as an
 %% "assembly form", ready to be compiled again to an executable module. The
-%% generated module has a single `run/N' function. This function contains the
-%% code of the extracted anonymous function.
+%% generated module has a single `run/N' exported function. This function
+%% contains the code of the extracted anonymous function.
 %%
 %% Because this process works on the assembly code, it means that if the
 %% initial module hosting the anonymous function was compiled with Erlang
@@ -113,8 +113,15 @@
                       pid => any(),
                       type => local | external,
                       uniq => any()}.
+%% Information returned by {@link erlang:fun_info/1}.
+
 -type beam_instr() :: atom() | tuple().
+%% A beam assembly instruction.
+
 -type label() :: pos_integer().
+%% a beam assembly label.
+%%
+%% Other assembly instructions can jump to this label.
 
 %% The following records are used to store the decoded "Line" beam chunk. They
 %% are used while processing `line' instructions to restore the correct
@@ -267,6 +274,9 @@ fun((#{calls := #{Call :: mfa() => true},
               debug_info/0]).
 
 -type all_calls_map() :: #{mfa() => true}.
+%% The `all_calls' map, used to calls made by the extracted function and all
+%% the functions it calls, included functions passed as argument or in its
+%% environment.
 
 -record(state, {generated_module_name :: module() | undefined,
                 entrypoint :: mfa() | undefined,
@@ -293,13 +303,16 @@ fun((#{calls := #{Call :: mfa() => true},
                 [],
                 [#function{}],
                 label()}.
+%% The assembly form passed to the compiler.
+%%
+%% It should be exported by the compiler application ideally.
 
 -define(SF_ENTRYPOINT, run).
 
 -spec to_standalone_fun(Fun) -> StandaloneFun when
       Fun :: fun(),
       StandaloneFun :: horus_fun().
-%% @doc Extracts the given anonymous function
+%% @doc Extracts the given anonymous function.
 %%
 %% This is the same as:
 %% ```
@@ -318,7 +331,25 @@ to_standalone_fun(Fun) ->
       Fun :: fun(),
       Options :: options(),
       StandaloneFun :: horus_fun().
-%% @doc Extracts the given anonymous function
+%% @doc Extracts the given anonymous function.
+%%
+%% Example of successful extraction:
+%% ```
+%% Fun = fun(Term) ->
+%%           io:format(standard_error, "~p~n", [Term])
+%%       end,
+%% StandaloneFun = horus:to_standalone_fun(Fun),
+%%
+%% horus:exec(StandaloneFun, [calendar:local_time()]).
+%% '''
+%%
+%% Example of an error, trying to export a non-existing function:
+%% ```
+%% horus:to_standalone_fun(fun not_a_module:not_a_function/0).
+%%
+%% %% ** exception throw: {horus, call_to_unexported_function,
+%% %%                             #{mfa => {not_a_module, not_a_function, 0}}}
+%% '''
 %%
 %% @param Fun the anonymous function to extract
 %% @param Options a map of options
@@ -940,6 +971,16 @@ merge_comments(Comments, ExistingComments) ->
 %% anonymous functions.
 %%
 %% The list of `Args' must match the arity of the anonymous function.
+%%
+%% Example:
+%% ```
+%% Fun = fun(Term) ->
+%%           io:format(standard_error, "~p~n", [Term])
+%%       end,
+%% StandaloneFun = horus:to_standalone_fun(Fun),
+%%
+%% horus:exec(StandaloneFun, [calendar:local_time()]).
+%% '''
 %%
 %% @param StandaloneFun the extracted function as returned by {@link
 %% to_standalone_fun/2}.

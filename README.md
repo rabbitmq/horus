@@ -7,10 +7,93 @@
 Horus is a library that extracts an anonymous function's code and creates a
 standalone version of it in a new module at runtime.
 
+The goal is to have a storable and transferable function which does not depend
+on the availability of the module that defined it.
+
+<img align="right" height="150" src="/doc/horus-logo.svg">
+
+## How does it work?
+
+To achieve that goal, Horus extracts the assembly code of the anonymous
+function and creates a standalone Erlang module based on it. This module can be
+stored, transfered to another Erlang node and executed anywhere without the
+presence of the initial anonymous function's module.
+
 ## Project maturity
 
 Horus is still under active development and should be considered *Alpha* at
 this stage.
+
+## Documentation
+
+* A short tutorial in the [Getting started](#getting-started) section below
+* [Documentation and API reference](https://rabbitmq.github.io/horus/)
+
+## Getting started
+
+### Add as a dependency
+
+Add Horus as a dependency of your project:
+
+Using Rebar:
+
+```erlang
+%% In rebar.config
+{deps, [{horus, "0.1.0"}]}.
+```
+
+Using Erlang.mk:
+
+```make
+# In your Makefile
+DEPS += horus
+dep_horus = hex 0.1.0
+```
+
+Using Mix:
+
+```elixir
+# In mix.exs
+defp deps do
+  [
+    {:horus, "0.1.0"}
+  ]
+end
+```
+
+### Extract an anonymous function
+
+To extract an anonymous function, use `horus:to_standalone_fun/1`:
+
+```erlang
+Fun = fun() ->
+          %% Do something facy.
+      end,
+
+StandaloneFun = horus:to_standalone_fun(Fun).
+```
+
+It works with references to regular functions are well:
+
+```erlang
+Log = fun logger:info/2,
+
+StandaloneLog = horus:to_standalone_fun(Log).
+```
+
+### Execute a standalone function
+
+Once extracted, the function can be stored as an Erlang binary, or transfered
+to a remote Erlang node. You then use `horus:exec/2` to execute it:
+
+```erlang
+receive
+    {standalone_fun, StandaloneLog} ->
+        horus:exec(
+          StandaloneLog,
+          ["~p received and executed function", [self()]])
+end.
+```
 
 ## How to build
 

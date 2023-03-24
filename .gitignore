@@ -6,6 +6,8 @@ erl_crash.dump
 /_checkouts
 /doc/*
 !/doc/_head.html
+!/doc/horus-favicon.svg
+!/doc/horus-logo.svg
 !/doc/overview.edoc
 !/doc/stylesheet.css
 /mix.lock
