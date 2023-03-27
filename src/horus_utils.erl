@@ -9,7 +9,7 @@
 
 -module(horus_utils).
 
--export([should_collect_code_for_module/1,
+-export([should_process_module/1,
          init_list_of_modules_to_skip/0,
          clear_list_of_modules_to_skip/0]).
 
@@ -19,19 +19,19 @@
 
 -define(PT_MODULES_TO_SKIP, {horus, skipped_modules_in_code_collection}).
 
--spec should_collect_code_for_module(Module) -> Collect when
+-spec should_process_module(Module) -> Collect when
       Module :: module(),
       Collect :: boolean().
 %% @doc Indicates if the code from `Module' should be processed/collected.
 
-should_collect_code_for_module(Module) ->
+should_process_module(Module) ->
     try
         Modules = persistent_term:get(?PT_MODULES_TO_SKIP),
         not maps:is_key(Module, Modules)
     catch
         error:badarg ->
             ok = init_list_of_modules_to_skip(),
-            should_collect_code_for_module(Module)
+            should_process_module(Module)
     end.
 
 -spec init_list_of_modules_to_skip() -> ok.

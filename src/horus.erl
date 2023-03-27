@@ -2369,10 +2369,7 @@ should_process_function(
          errors = Errors} = State)
   when is_function(Callback) ->
     try
-        ShouldProcess =
-        default_should_process_function(Module, Name, Arity)
-        and
-        Callback(Module, Name, Arity, FromModule),
+        ShouldProcess = Callback(Module, Name, Arity, FromModule),
         {ShouldProcess, State}
     catch
         throw:Error ->
@@ -2380,12 +2377,9 @@ should_process_function(
             State1 = State#state{errors = Errors1},
             {false, State1}
     end;
-should_process_function(Module, Name, Arity, _FromModule, State) ->
-    ShouldProcess = default_should_process_function(Module, Name, Arity),
+should_process_function(Module, _Name, _Arity, _FromModule, State) ->
+    ShouldProcess = horus_utils:should_process_module(Module),
     {ShouldProcess, State}.
-
-default_should_process_function(Module, _Name, _Arity) ->
-    horus_utils:should_collect_code_for_module(Module).
 
 -spec is_standalone_fun_still_needed(State) -> IsNeeded when
       State :: #state{},
