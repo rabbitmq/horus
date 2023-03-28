@@ -8,6 +8,8 @@ erl_crash.dump
 !/doc/_head.html
 !/doc/horus-favicon.svg
 !/doc/horus-logo.svg
+!/doc/horus-social-preview.svg
+!/doc/horus-social-preview.png
 !/doc/overview.edoc
 !/doc/stylesheet.css
 /mix.lock
