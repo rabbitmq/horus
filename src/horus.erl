@@ -1918,6 +1918,12 @@ get_object_code(Module) ->
 -endif.
 
 do_get_object_code(Module) ->
+    case cover:is_compiled(Module) of
+        false            -> get_object_code_from_code_server(Module);
+        {file, Filename} -> get_object_code_from_cover(Module, Filename)
+    end.
+
+get_object_code_from_code_server(Module) ->
     case code:get_object_code(Module) of
         {Module, Beam, Filename} ->
             {Module, Beam, Filename};
@@ -1925,6 +1931,26 @@ do_get_object_code(Module) ->
             ?horus_misuse(
                module_not_found,
                #{module => Module})
+    end.
+
+%% Definition taken from `lib/tools/src/cover.erl'.
+-define(BINARY_TABLE, 'cover_binary_code_table').
+
+get_object_code_from_cover(Module, Filename) ->
+    %% This relies on the internals of `cover'.
+    %%
+    %% `cover' stores the recompiled module in an ETS table. So instead of
+    %% patching the original module asembly to emit cover calls, we simply
+    %% take the cover-compiled module and disassemble it, like a regular
+    %% module.
+    case ets:lookup(?BINARY_TABLE, Module) of
+        [{Module, Beam}] ->
+            {Module, Beam, Filename};
+        [] ->
+            %% The cover-compiled module may have been removed from the ETS
+            %% table between the time we called `cover:is_compiled/1'. Let's
+            %% start again.
+            do_get_object_code(Module)
     end.
 
 do_disassemble_and_cache(Module, Checksum, Beam) ->
