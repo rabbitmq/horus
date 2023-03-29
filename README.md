@@ -67,7 +67,7 @@ To extract an anonymous function, use `horus:to_standalone_fun/1`:
 
 ```erlang
 Fun = fun() ->
-          %% Do something facy.
+          do_something_fancy()
       end,
 
 StandaloneFun = horus:to_standalone_fun(Fun).
