@@ -264,7 +264,9 @@ fun((#{calls := #{Call :: mfa() => true},
 %% `#horus_fun.debug_info' field. See {@link debug_info()}.</li>
 %% </ul>
 
--type debug_info() :: #{asm := asm()}.
+-type debug_info() :: #{fun_info := fun_info(),
+                        checksums := #{module() => binary()},
+                        asm := asm()}.
 %% Optional details added to the standalone function record.
 %%
 %% They are only added if the `debug_info' {@link options()} is set to true.
@@ -455,7 +457,7 @@ to_standalone_fun3(
   #state{fun_info = #{module := Module,
                       name := Name,
                       arity := Arity,
-                      type := Type},
+                      type := Type} = Info,
          options = Options} = State) ->
     case Type of
         local ->
@@ -499,7 +501,10 @@ to_standalone_fun3(
                                     false ->
                                         undefined;
                                     true ->
-                                        #{asm => Asm}
+                                        Checksums = State4#state.checksums,
+                                        #{fun_info => Info,
+                                          checksums => Checksums,
+                                          asm => Asm}
                                 end,
                     StandaloneFun = #horus_fun{
                                        module = GeneratedModuleName,
