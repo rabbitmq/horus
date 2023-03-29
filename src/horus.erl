@@ -990,9 +990,9 @@ merge_comments(Comments, ExistingComments) ->
 
 exec(
   #horus_fun{module = Module,
-                  arity = Arity,
-                  literal_funs = LiteralFuns,
-                  env = Env} = StandaloneFun,
+             arity = Arity,
+             literal_funs = LiteralFuns,
+             env = Env} = StandaloneFun,
   Args) when length(Args) =:= Arity ->
     load_standalone_fun(StandaloneFun),
     %% We also need to load any literal functions referenced by the standalone
