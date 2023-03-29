@@ -11,6 +11,9 @@
 
 -include("test/helpers.hrl").
 
+-dialyzer([{no_return,
+            [stacktrace_test/0]}]).
+
 throw_test() ->
     StandaloneFun = ?make_standalone_fun(
                       begin
@@ -36,8 +39,8 @@ exit_test() ->
     ?assertExit(failure, horus:exec(StandaloneFun, [])).
 
 stacktrace_test() ->
-    Fun = fun() -> error(failure) end,
-    StandaloneFun = horus:to_standalone_fun(Fun),
+    Fun = fun() -> failing_fun() end,
+    StandaloneFun = horus:to_standalone_fun(Fun, #{debug_info => true}),
     ?assertStandaloneFun(StandaloneFun),
     Stacktrace1 = try
                       Fun()
@@ -49,8 +52,26 @@ stacktrace_test() ->
         horus:exec(StandaloneFun, [])
     catch
         error:failure:Stacktrace2 ->
-            %% TODO: Rewrite stacktraces to point to original MFAs too.
-            {_, _, _, Loc1} = hd(Stacktrace1),
-            {_, _, _, Loc2} = hd(Stacktrace2),
-            ?assertEqual(Loc1, Loc2)
+            %% When comparing the stacktraces, we only consider the part
+            %% inside the anonymous function. That's why we take all frames
+            %% while they belong to the anonymous function and the function is
+            %% calls.
+            %%
+            %% For `Stacktrace1', we will stop before the frame calling the
+            %% anonymous function (i.e. this test function). For
+            %% `Stacktrace2', we will stop before the `horus:exec/2' call.
+            Pred = fun({Module, Name, _, _}) ->
+                           Module =:= ?MODULE andalso
+                           Name =/= ?FUNCTION_NAME
+                   end,
+            Stacktrace1a = lists:takewhile(Pred, Stacktrace1),
+            Stacktrace2a = lists:takewhile(Pred, Stacktrace2),
+            ?assertNotEqual([], Stacktrace1a),
+            ?assertNotEqual([], Stacktrace2a),
+            ?assertEqual(Stacktrace1a, Stacktrace2a)
     end.
+
+-spec failing_fun() -> no_return().
+
+failing_fun() ->
+    error(failure).
