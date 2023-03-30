@@ -1066,8 +1066,17 @@ reconstruct_original_stracktrace(
   Stacktrace) ->
     lists:map(
       fun
+          ({Module, Name, Args, Extra})
+            when GeneratedModuleName =:= Module andalso is_list(Args) ->
+              Arity = length(Args),
+              {RealModule, RealName, RealArity} =
+              maps:get({Name, Arity}, FunNameMapping),
+
+              RealArgs = lists:sublist(Args, RealArity),
+              ?assertEqual(RealArity, length(RealArgs)),
+              {RealModule, RealName, RealArgs, Extra};
           ({Module, Name, Arity, Extra})
-            when GeneratedModuleName =:= Module ->
+            when GeneratedModuleName =:= Module andalso is_integer(Arity) ->
               {RealModule, RealName, RealArity} =
               maps:get({Name, Arity}, FunNameMapping),
 
