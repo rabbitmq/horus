@@ -17,6 +17,7 @@
                     beam :: binary(),
                     arity :: arity(),
                     literal_funs :: [horus:horus_fun()],
+                    fun_name_mapping :: horus:fun_name_mapping(),
                     env :: list(),
                     debug_info :: horus:debug_info() | undefined}).
 

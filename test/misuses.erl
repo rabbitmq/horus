@@ -90,6 +90,7 @@ exec_invalid_generated_module_test() ->
                        beam = <<"invalid">>,
                        arity = 0,
                        literal_funs = [],
+                       fun_name_mapping = #{},
                        env = []},
     ?assertError(
        ?horus_exception(

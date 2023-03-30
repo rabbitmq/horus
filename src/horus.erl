@@ -271,6 +271,7 @@ fun((#{calls := #{Call :: mfa() => true},
 
 -export_type([horus_fun/0,
               options/0,
+              fun_name_mapping/0,
               debug_info/0]).
 
 -type all_calls_map() :: #{mfa() => true}.
@@ -306,6 +307,12 @@ fun((#{calls := #{Call :: mfa() => true},
 %% The assembly form passed to the compiler.
 %%
 %% It should be exported by the compiler application ideally.
+
+-type fun_name_mapping() :: #{{atom(), arity()} => mfa()}.
+%% Extracted function name to its original MFA mapping.
+%%
+%% This is used to reconstruct a meaningful stacktrace in case of an
+%% exception.
 
 -define(SF_ENTRYPOINT, run).
 
@@ -485,7 +492,7 @@ to_standalone_fun3(
                     #state{literal_funs = LiteralFuns0} = State4,
                     LiteralFuns = maps:values(LiteralFuns0),
 
-                    Asm = pass2(State4),
+                    {ok, Asm, FunNameMapping} = pass2(State4),
                     {GeneratedModuleName, Beam} = compile(Asm),
 
                     DebugInfo = case maps:get(debug_info, Options, false) of
@@ -499,6 +506,7 @@ to_standalone_fun3(
                                        beam = Beam,
                                        arity = Arity,
                                        literal_funs = LiteralFuns,
+                                       fun_name_mapping = FunNameMapping,
                                        env = Env,
                                        debug_info = DebugInfo},
                     cache_standalone_fun(State4, StandaloneFun),
@@ -1002,7 +1010,14 @@ exec(
       fun(LiteralFun) -> load_standalone_fun(LiteralFun) end,
       LiteralFuns),
     Env1 = to_actual_arg(Env),
-    erlang:apply(Module, ?SF_ENTRYPOINT, Args ++ Env1);
+    try
+        erlang:apply(Module, ?SF_ENTRYPOINT, Args ++ Env1)
+    catch
+        Class:Reason:Stacktrace ->
+            Stacktrace1 = reconstruct_original_stracktrace(
+                            StandaloneFun, Stacktrace),
+            erlang:raise(Class, Reason, Stacktrace1)
+    end;
 exec(#horus_fun{} = StandaloneFun, Args) ->
     error({badarity, {StandaloneFun, Args}});
 exec(Fun, Args) ->
@@ -1039,6 +1054,22 @@ to_fun(#horus_fun{module = Module, arity = Arity} = StandaloneFun) ->
     erlang:make_fun(Module, run, Arity);
 to_fun(Fun) when is_function(Fun) ->
     Fun.
+
+reconstruct_original_stracktrace(
+  #horus_fun{module = GeneratedModuleName,
+             fun_name_mapping = FunNameMapping},
+  Stacktrace) ->
+    lists:map(
+      fun
+          ({Module, Name, Arity, Extra})
+            when GeneratedModuleName =:= Module ->
+              {RealModule, RealName, RealArity} =
+              maps:get({Name, Arity}, FunNameMapping),
+
+              {RealModule, RealName, RealArity, Extra};
+          (Frame) ->
+              Frame
+      end, Stacktrace).
 
 %% -------------------------------------------------------------------
 %% Code processing [Pass 1]
@@ -2408,9 +2439,11 @@ process_errors(#state{errors = [Error | _]}) ->
 %% Code processing [Pass 2]
 %% -------------------------------------------------------------------
 
--spec pass2(State) -> Asm when
+-spec pass2(State) -> Ret when
       State :: #state{},
-      Asm :: asm().
+      Ret :: {ok, Asm, FunNameMapping},
+      Asm :: asm(),
+      FunNameMapping :: fun_name_mapping().
 
 pass2(
   #state{functions = Functions0,
@@ -2438,11 +2471,14 @@ pass2(
     Attributes = [],
     Labels = NextLabel,
 
-    {GeneratedModuleName,
-     Exports,
-     Attributes,
-     Functions2,
-     Labels}.
+    FunNameMapping = extracted_to_initial_fun_name_mapping(Functions1),
+
+    Asm = {GeneratedModuleName,
+           Exports,
+           Attributes,
+           Functions2,
+           Labels},
+    {ok, Asm, FunNameMapping}.
 
 -spec pass2_process_functions(Functions, State) -> Functions when
       Functions :: #{mfa() => #function{}},
@@ -2707,6 +2743,17 @@ gen_function_name(
                      io_lib:format(
                        "~s__~s", [Module, Name])),
     list_to_atom(InternalName).
+
+-spec extracted_to_initial_fun_name_mapping(Functions) -> FunNameMapping when
+      Functions :: #{mfa() => #function{}},
+      FunNameMapping :: fun_name_mapping().
+%% @private
+
+extracted_to_initial_fun_name_mapping(Functions) ->
+    maps:fold(
+      fun(MFA, #function{name = Name, arity = Arity}, Mapping) ->
+              Mapping#{{Name, Arity} => MFA}
+      end, #{}, Functions).
 
 %% -------------------------------------------------------------------
 %% Environment handling.
