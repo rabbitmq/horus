@@ -7,6 +7,10 @@
 
 -module(erlang_blocks).
 
+-if(?OTP_RELEASE >= 25).
+-feature(maybe_expr,enable).
+-endif.
+
 -include_lib("eunit/include/eunit.hrl").
 
 -include("test/helpers.hrl").
@@ -135,3 +139,40 @@ raise_test() ->
                        end),
     ?assertStandaloneFun(StandaloneFun),
     ?assertError({badmatch, 1}, horus:exec(StandaloneFun, [])).
+
+-if(?OTP_RELEASE >= 25).
+-if(?FEATURE_ENABLED(maybe_expr)).
+maybe_test() ->
+    StandaloneFun = ?make_standalone_fun(
+                       begin
+                           maybe
+                               {ok, A} ?= erlang:list_to_tuple([ok, 42]),
+                               true = A >= 0,
+                               {ok, B} ?= erlang:list_to_tuple([ok, 58]),
+                               A + B
+                           end
+                       end),
+    ?assertStandaloneFun(StandaloneFun),
+    ?assertEqual(100, horus:exec(StandaloneFun, [])).
+
+maybe_else_test() ->
+    StandaloneFun = ?make_standalone_fun(
+                       begin
+                           maybe
+                               {ok, A} ?= erlang:list_to_tuple([ok, 42]),
+                               true = A >= 0,
+                               {ok, B} ?= receive
+                                              {not_receiving, Msg} -> Msg
+                                          after 0 ->
+                                                    {error, reason}
+                                          end,
+                               A + B
+                           else
+                               {error, Reason} ->
+                                   Reason
+                           end
+                       end),
+    ?assertStandaloneFun(StandaloneFun),
+    ?assertEqual(reason, horus:exec(StandaloneFun, [])).
+-endif.
+-endif.
