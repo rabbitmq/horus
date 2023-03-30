@@ -46,7 +46,7 @@ jobs:
       - name: Xref
         run: rebar3 xref
       - name: EUnit (unit tests)
-        run: rebar3 eunit --verbose --cover
+        run: env ERL_FLAGS='-enable-feature maybe_expr' rebar3 eunit --verbose --cover
 
       - name: Dialyzer
         if: ${{ matrix.otp_version == env.RUN_DIALYZER_ON_OTP_RELEASE && matrix.os == 'ubuntu-latest' }}

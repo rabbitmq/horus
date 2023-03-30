@@ -2656,6 +2656,9 @@ pass2_process_instruction(
   {loop_rec, _, _} = Instruction, State) ->
     replace_label(Instruction, 2, State);
 pass2_process_instruction(
+  {loop_rec_end, _} = Instruction, State) ->
+    replace_label(Instruction, 2, State);
+pass2_process_instruction(
   {move, {atom, ?MOD_FOR_MODULE_INFO_FUN}, _} = Instruction,
   #state{mfa_in_progress = {?MOD_FOR_MODULE_INFO_FUN, module_info, _Arity},
          generated_module_name = GeneratedModuleName}) ->
