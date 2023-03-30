@@ -74,7 +74,7 @@ to older runtimes.</p>
 <p>  A beam assembly instruction.</p>
 
 <h3 class="typedecl"><a name="type-debug_info">debug_info()</a></h3>
-<p><code>debug_info() = #{asm := <a href="#type-asm">asm()</a>}</code></p>
+<p><code>debug_info() = #{fun_info := <a href="#type-fun_info">fun_info()</a>, checksums := #{module() =&gt; binary()}, asm := <a href="#type-asm">asm()</a>}</code></p>
 <p><p>  Optional details added to the standalone function record.</p>
  
   They are only added if the <code>debug_info</code> <a docgen-rel="seetype" docgen-href="#options/0" href="#type-options"><code>options()</code></a> is set to true.</p>
@@ -92,6 +92,10 @@ permitted, throws an exception otherwise.</p>
           ({trim, _, _}) -&gt; ok;
           (Unknown)      -&gt; throw({unknown_instruction, Unknown})
       end.</code></pre></p>
+
+<h3 class="typedecl"><a name="type-fun_info">fun_info()</a></h3>
+<p><code>fun_info() = #{arity =&gt; arity(), env =&gt; any(), index =&gt; any(), name =&gt; atom(), module =&gt; module(), new_index =&gt; any(), new_uniq =&gt; any(), pid =&gt; any(), type =&gt; local | external, uniq =&gt; any()}</code></p>
+<p>  Information returned by <a docgen-rel="seemfa" docgen-href="erlang#fun_info/1" href="erlang.html#fun_info-1"><code>erlang:fun_info/1</code></a>.</p>
 
 <h3 class="typedecl"><a name="type-fun_name_mapping">fun_name_mapping()</a></h3>
 <p><code>fun_name_mapping() = #{{atom(), arity()} =&gt; mfa()}</code></p>
