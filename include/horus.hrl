@@ -13,7 +13,7 @@
 
 -define(IS_HORUS_STANDALONE_FUN(Fun),
         (is_tuple(Fun) andalso
-         size(Fun) =:= 7 andalso
+         size(Fun) =:= 8 andalso
          element(1, Fun) =:= horus_fun)).
 
 -define(IS_HORUS_STANDALONE_FUN(Fun, Arity),
