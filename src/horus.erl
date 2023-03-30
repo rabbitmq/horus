@@ -264,7 +264,9 @@ fun((#{calls := #{Call :: mfa() => true},
 %% `#horus_fun.debug_info' field. See {@link debug_info()}.</li>
 %% </ul>
 
--type debug_info() :: #{asm := asm()}.
+-type debug_info() :: #{fun_info := fun_info(),
+                        checksums := #{module() => binary()},
+                        asm := asm()}.
 %% Optional details added to the standalone function record.
 %%
 %% They are only added if the `debug_info' {@link options()} is set to true.
@@ -455,7 +457,7 @@ to_standalone_fun3(
   #state{fun_info = #{module := Module,
                       name := Name,
                       arity := Arity,
-                      type := Type},
+                      type := Type} = Info,
          options = Options} = State) ->
     case Type of
         local ->
@@ -499,7 +501,10 @@ to_standalone_fun3(
                                     false ->
                                         undefined;
                                     true ->
-                                        #{asm => Asm}
+                                        Checksums = State4#state.checksums,
+                                        #{fun_info => Info,
+                                          checksums => Checksums,
+                                          asm => Asm}
                                 end,
                     StandaloneFun = #horus_fun{
                                        module = GeneratedModuleName,
@@ -1913,6 +1918,12 @@ get_object_code(Module) ->
 -endif.
 
 do_get_object_code(Module) ->
+    case cover:is_compiled(Module) of
+        false            -> get_object_code_from_code_server(Module);
+        {file, Filename} -> get_object_code_from_cover(Module, Filename)
+    end.
+
+get_object_code_from_code_server(Module) ->
     case code:get_object_code(Module) of
         {Module, Beam, Filename} ->
             {Module, Beam, Filename};
@@ -1920,6 +1931,26 @@ do_get_object_code(Module) ->
             ?horus_misuse(
                module_not_found,
                #{module => Module})
+    end.
+
+%% Definition taken from `lib/tools/src/cover.erl'.
+-define(BINARY_TABLE, 'cover_binary_code_table').
+
+get_object_code_from_cover(Module, Filename) ->
+    %% This relies on the internals of `cover'.
+    %%
+    %% `cover' stores the recompiled module in an ETS table. So instead of
+    %% patching the original module asembly to emit cover calls, we simply
+    %% take the cover-compiled module and disassemble it, like a regular
+    %% module.
+    case ets:lookup(?BINARY_TABLE, Module) of
+        [{Module, Beam}] ->
+            {Module, Beam, Filename};
+        [] ->
+            %% The cover-compiled module may have been removed from the ETS
+            %% table between the time we called `cover:is_compiled/1'. Let's
+            %% start again.
+            do_get_object_code(Module)
     end.
 
 do_disassemble_and_cache(Module, Checksum, Beam) ->
