@@ -3,7 +3,7 @@
 @author The RabbitMQ team <info@rabbitmq.com>
 @copyright 2021-2023 VMware, Inc. or its affiliates.  All rights reserved.
 @title The Horus library
-@version 0.2.1
+@version 0.2.2
 
 @doc
 Horus is a library that extracts an anonymous function's code and creates a
