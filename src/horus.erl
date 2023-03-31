@@ -67,6 +67,9 @@
          to_fun/1,
          exec/2]).
 
+%% For internal use only.
+-export([do_get_object_code/1]).
+
 -ifdef(TEST).
 -export([standalone_fun_cache_key/5,
          override_object_code/2,
@@ -1926,10 +1929,22 @@ get_object_code(Module) ->
     do_get_object_code(Module).
 -endif.
 
+-spec do_get_object_code(Module) -> Ret when
+      Module :: module(),
+      Ret :: {Module, Beam, Filename},
+      Beam :: binary(),
+      Filename :: string().
+%% @private
+
 do_get_object_code(Module) ->
     case cover:is_compiled(Module) of
-        false            -> get_object_code_from_code_server(Module);
-        {file, Filename} -> get_object_code_from_cover(Module, Filename)
+        false ->
+            get_object_code_from_code_server(Module);
+        {file, Filename} ->
+            get_object_code_from_cover(Module, Filename);
+        {error, not_main_node} ->
+            CoverMainNode = cover:get_main_node(),
+            erpc:call(CoverMainNode, ?MODULE, do_get_object_code, [Module])
     end.
 
 get_object_code_from_code_server(Module) ->

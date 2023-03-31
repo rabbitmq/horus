@@ -5,7 +5,7 @@
 %% Copyright © 2023 VMware, Inc. or its affiliates.  All rights reserved.
 %%
 
--module(cover_compiled_mod).
+-module(cover_compiled_mod1).
 
 -export([run/1]).
 
