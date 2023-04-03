@@ -9,7 +9,8 @@
   {applications,
    [kernel,
     stdlib,
-    compiler
+    compiler,
+    tools %% To support cover-compiled modules.
    ]},
   {env, [{skip_collection_froms_apps, []}]},
   {files, [
