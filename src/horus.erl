@@ -68,11 +68,12 @@
          exec/2]).
 
 %% For internal use only.
--export([do_get_object_code/1]).
+-export([override_object_code/2,
+         forget_overridden_object_code/1,
+         do_get_object_code/1]).
 
 -ifdef(TEST).
 -export([standalone_fun_cache_key/5,
-         override_object_code/2,
          get_object_code/1,
          decode_line_chunk/2,
          compile/1,
@@ -1910,12 +1911,16 @@ disassemble_module1(Module, undefined) ->
     BeamFileRecord = do_disassemble_and_cache(Module, Checksum, Beam),
     {BeamFileRecord, Checksum}.
 
--ifdef(TEST).
 -define(OBJECT_CODE_KEY(Module), {horus, object_code, Module}).
 
 override_object_code(Module, Beam) ->
     Key = ?OBJECT_CODE_KEY(Module),
     persistent_term:put(Key, Beam),
+    ok.
+
+forget_overridden_object_code(Module) ->
+    Key = ?OBJECT_CODE_KEY(Module),
+    _ = persistent_term:erase(Key),
     ok.
 
 get_object_code(Module) ->
@@ -1924,10 +1929,6 @@ get_object_code(Module) ->
         undefined -> do_get_object_code(Module);
         Beam      -> {Module, Beam, ""}
     end.
--else.
-get_object_code(Module) ->
-    do_get_object_code(Module).
--endif.
 
 -spec do_get_object_code(Module) -> Ret when
       Module :: module(),
