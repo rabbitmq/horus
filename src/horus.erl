@@ -296,6 +296,7 @@ fun((#{calls := #{Call :: mfa() => true},
                 lines_in_progress :: #lines{} | undefined,
                 strings_in_progress :: binary() | undefined,
                 lambdas_in_progress :: [#lambda{}] | undefined,
+                asm_in_progress_from :: code_server | cover | undefined,
                 mfa_in_progress :: mfa() | undefined,
                 function_in_progress :: atom() | undefined,
                 next_label = 1 :: label(),
@@ -1851,38 +1852,42 @@ disassemble_module(Module, #state{checksums = Checksums} = State) ->
             {#beam_file_ext{lines = Lines,
                             strings = Strings,
                             lambdas = Lambdas} = BeamFileRecord,
-             Checksum} = disassemble_module1(Module, Checksum),
+             Checksum,
+             CodeFrom} = disassemble_module1(Module, Checksum),
 
             State1 = State#state{lines_in_progress = Lines,
                                  strings_in_progress = Strings,
-                                 lambdas_in_progress = Lambdas},
+                                 lambdas_in_progress = Lambdas,
+                                 asm_in_progress_from = CodeFrom},
             {BeamFileRecord, State1};
         _ ->
             {#beam_file_ext{lines = Lines,
                             strings = Strings} = BeamFileRecord,
-             Checksum} = disassemble_module1(Module, undefined),
+             Checksum,
+             CodeFrom} = disassemble_module1(Module, undefined),
             ?assert(is_binary(Checksum)),
 
             Checksums1 = Checksums#{Module => Checksum},
             State1 = State#state{checksums = Checksums1,
                                  lines_in_progress = Lines,
-                                 strings_in_progress = Strings},
+                                 strings_in_progress = Strings,
+                                 asm_in_progress_from = CodeFrom},
             {BeamFileRecord, State1}
     end.
 
 disassemble_module1(Module, Checksum) when is_binary(Checksum) ->
     Key = ?ASM_CACHE_KEY(Module, Checksum),
     case persistent_term:get(Key, undefined) of
-        #beam_file_ext{} = BeamFileRecord ->
-            {BeamFileRecord, Checksum};
+        {#beam_file_ext{} = BeamFileRecord, CodeFrom} ->
+            {BeamFileRecord, Checksum, CodeFrom};
         undefined ->
-            {Module, Beam, _} = get_object_code(Module),
+            {Module, Beam, _, CodeFrom} = get_object_code(Module),
             {ok, {Module, ActualChecksum}} = beam_lib:md5(Beam),
             case ActualChecksum of
                 Checksum ->
                     BeamFileRecord = do_disassemble_and_cache(
-                                       Module, Checksum, Beam),
-                    {BeamFileRecord, Checksum};
+                                       Module, Checksum, Beam, CodeFrom),
+                    {BeamFileRecord, Checksum, CodeFrom};
                 _ ->
                     CompileInfoFromFun = Module:module_info(compile),
                     CompileInfoOnDisk = get_and_decode_compile_chunk(
@@ -1892,8 +1897,9 @@ disassemble_module1(Module, Checksum) when is_binary(Checksum) ->
                     case IsAcceptable of
                         true ->
                             BeamFileRecord = do_disassemble_and_cache(
-                                               Module, Checksum, Beam),
-                            {BeamFileRecord, Checksum};
+                                               Module, Checksum, Beam,
+                                               CodeFrom),
+                            {BeamFileRecord, Checksum, CodeFrom};
                         false ->
                             ?horus_misuse(
                                mismatching_module_checksum,
@@ -1906,10 +1912,19 @@ disassemble_module1(Module, Checksum) when is_binary(Checksum) ->
             end
     end;
 disassemble_module1(Module, undefined) ->
-    {Module, Beam, _} = get_object_code(Module),
+    {Module, Beam, _, CodeFrom} = get_object_code(Module),
     {ok, {Module, Checksum}} = beam_lib:md5(Beam),
-    BeamFileRecord = do_disassemble_and_cache(Module, Checksum, Beam),
-    {BeamFileRecord, Checksum}.
+    BeamFileRecord = do_disassemble_and_cache(
+                       Module, Checksum, Beam, CodeFrom),
+    {BeamFileRecord, Checksum, CodeFrom}.
+
+-spec get_object_code(Module) -> Ret when
+      Module :: module(),
+      Ret :: {Module, Beam, Filename, CodeFrom},
+      Beam :: binary(),
+      Filename :: string(),
+      CodeFrom :: code_server | cover.
+%% @private
 
 -define(OBJECT_CODE_KEY(Module), {horus, object_code, Module}).
 
@@ -1927,14 +1942,15 @@ get_object_code(Module) ->
     Key = ?OBJECT_CODE_KEY(Module),
     case persistent_term:get(Key, undefined) of
         undefined -> do_get_object_code(Module);
-        Beam      -> {Module, Beam, ""}
+        Beam      -> {Module, Beam, "", code_server}
     end.
 
 -spec do_get_object_code(Module) -> Ret when
       Module :: module(),
-      Ret :: {Module, Beam, Filename},
+      Ret :: {Module, Beam, Filename, CodeFrom},
       Beam :: binary(),
-      Filename :: string().
+      Filename :: string(),
+      CodeFrom :: code_server | cover.
 %% @private
 
 do_get_object_code(Module) ->
@@ -1951,7 +1967,7 @@ do_get_object_code(Module) ->
 get_object_code_from_code_server(Module) ->
     case code:get_object_code(Module) of
         {Module, Beam, Filename} ->
-            {Module, Beam, Filename};
+            {Module, Beam, Filename, code_server};
         error ->
             ?horus_misuse(
                module_not_found,
@@ -1970,7 +1986,7 @@ get_object_code_from_cover(Module, Filename) ->
     %% module.
     case ets:lookup(?BINARY_TABLE, Module) of
         [{Module, Beam}] ->
-            {Module, Beam, Filename};
+            {Module, Beam, Filename, cover};
         [] ->
             %% The cover-compiled module may have been removed from the ETS
             %% table between the time we called `cover:is_compiled/1'. Let's
@@ -1978,10 +1994,10 @@ get_object_code_from_cover(Module, Filename) ->
             do_get_object_code(Module)
     end.
 
-do_disassemble_and_cache(Module, Checksum, Beam) ->
+do_disassemble_and_cache(Module, Checksum, Beam, CodeFrom) ->
     Key = ?ASM_CACHE_KEY(Module, Checksum),
     BeamFileRecordExt = do_disassemble(Beam),
-    persistent_term:put(Key, BeamFileRecordExt),
+    persistent_term:put(Key, {BeamFileRecordExt, CodeFrom}),
     BeamFileRecordExt.
 
 do_disassemble(Beam) ->

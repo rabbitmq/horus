@@ -147,7 +147,9 @@ modified_module_causes_cache_miss_test() ->
     Options = #{},
 
     horus:override_object_code(Module, Beam1),
-    ?assertEqual({Module, Beam1, ""}, horus:get_object_code(Module)),
+    ?assertEqual(
+       {Module, Beam1, "", code_server},
+       horus:get_object_code(Module)),
     ?assertEqual({module, Module}, code:load_binary(Module, "", Beam1)),
     ?assert(erlang:function_exported(Module, version, 0)),
     Fun1 = fun Module:version/0,
@@ -170,7 +172,9 @@ modified_module_causes_cache_miss_test() ->
     _ = code:purge(Module),
 
     horus:override_object_code(Module, Beam2),
-    ?assertEqual({Module, Beam2, ""}, horus:get_object_code(Module)),
+    ?assertEqual(
+       {Module, Beam2, "", code_server},
+       horus:get_object_code(Module)),
     ?assertEqual({module, Module}, code:load_binary(Module, "", Beam2)),
     ?assert(erlang:function_exported(Module, version, 0)),
     Fun2 = fun Module:version/0,
