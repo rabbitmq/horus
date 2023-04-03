@@ -1203,6 +1203,12 @@ pass1_process_function_code(
       Instructions :: [beam_instr()],
       State :: #state{}.
 
+pass1_process_instructions(
+  Instructions,
+  #state{mfa_in_progress = MFA,
+         asm_in_progress_from = cover} = State) ->
+    Instructions1 = horus_cover:isolate_cover_instructions(MFA, Instructions),
+    pass1_process_instructions(Instructions1, State, []);
 pass1_process_instructions(Instructions, State) ->
     pass1_process_instructions(Instructions, State, []).
 
@@ -1221,6 +1227,22 @@ pass1_process_instructions(Instructions, State) ->
 %% detected from a function clause by the first group.
 
 %% First group.
+
+pass1_process_instructions(
+  [{'$cover', Instructions} | Rest],
+  #state{lines_in_progress = Lines} = State,
+  Result) ->
+    Instructions1 = lists:reverse(Instructions),
+    Instructions2 = lists:filtermap(
+                      fun
+                          ({line, Index} = Instr)
+                            when is_integer(Index) ->
+                              maybe_decode_line_instr(Instr, Lines);
+                          (Instruction) ->
+                              {true, Instruction}
+                      end, Instructions1),
+    Result1 = Instructions2 ++ Result,
+    pass1_process_instructions(Rest, State, Result1);
 
 pass1_process_instructions(
   [{arithfbif, Operation, Fail, Args, Dst} | Rest],
