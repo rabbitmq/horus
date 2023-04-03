@@ -1458,23 +1458,13 @@ pass1_process_instructions(
               end,
     pass1_process_instructions(Rest, State1, Result1);
 pass1_process_instructions(
-  [{line, Index} | Rest],
+  [{line, Index} = Instruction | Rest],
   #state{lines_in_progress = Lines} = State,
-  Result) ->
-    case Lines of
-        #lines{items = Items, names = Names} ->
-            %% We could decode the "Line" beam chunk which contains the mapping
-            %% between `Index' in the instruction decoded by `beam_disasm' and
-            %% the actual location (filename + line number). Therefore we can
-            %% generate the correct `line' instruction.
-            #line{name_index = NameIndex,
-                  location = Location} = lists:nth(Index + 1, Items),
-            Name = lists:nth(NameIndex + 1, Names),
-            Line = {line, [{location, Name, Location}]},
-            pass1_process_instructions(Rest, State, [Line | Result]);
-        undefined ->
-            %% Drop this instruction as we don't have the "Line" beam chunk to
-            %% decode it.
+  Result) when is_integer(Index) ->
+    case maybe_decode_line_instr(Instruction, Lines) of
+        {true, Instruction1} ->
+            pass1_process_instructions(Rest, State, [Instruction1 | Result]);
+        false ->
             pass1_process_instructions(Rest, State, Result)
     end;
 pass1_process_instructions(
@@ -2405,6 +2395,18 @@ fix_type_tagged_beam_registers(TypesInfo) when is_list(TypesInfo) ->
 
 get_reg_from_type_tagged_beam_register({tr, Reg, _}) -> Reg;
 get_reg_from_type_tagged_beam_register(Reg)          -> Reg.
+
+maybe_decode_line_instr({line, Index}, #lines{items = Items, names = Names}) ->
+    %% We could decode the "Line" beam chunk which contains the mapping
+    %% between `Index' in the instruction decoded by `beam_disasm' and the
+    %% actual location (filename + line number). Therefore we can generate the
+    %% correct `line' instruction.
+    #line{name_index = NameIndex,
+          location = Location} = lists:nth(Index + 1, Items),
+    Name = lists:nth(NameIndex + 1, Names),
+    {true, {line, [{location, Name, Location}]}};
+maybe_decode_line_instr({line, _Index}, undefined) ->
+    false.
 
 -spec ensure_instruction_is_permitted(Instruction, State) ->
     State when
