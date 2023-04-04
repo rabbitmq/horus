@@ -170,6 +170,7 @@ followed, false otherwise.</p>
 <table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#to_standalone_fun-1">to_standalone_fun/1</a></td><td>Extracts the given anonymous function.</td></tr>
 <tr><td valign="top"><a href="#to_standalone_fun-2">to_standalone_fun/2</a></td><td>Extracts the given anonymous function.</td></tr>
 <tr><td valign="top"><a href="#exec-2">exec/2</a></td><td>Executes a previously extracted anonymous function.</td></tr>
+<tr><td valign="top"><a href="#forget_overridden_object_code-1">forget_overridden_object_code/1</a></td><td></td></tr>
 </table>
 
 <h2><a name="functions">Function Details</a></h2>
@@ -240,6 +241,12 @@ StandaloneFun = horus:to_standalone_fun(Fun),
  
 horus:exec(StandaloneFun, [calendar:local_time()]).</code></pre>
  </p>
+
+<h3 class="function"><a name="forget_overridden_object_code-1">forget_overridden_object_code/1</a></h3>
+<div class="spec">
+<p><code>forget_overridden_object_code(Module) -&gt; any()</code></p>
+<p></p>
+</div>
 <hr>
 
 <div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
