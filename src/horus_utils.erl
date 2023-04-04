@@ -5,7 +5,7 @@
 %% Copyright © 2021-2023 VMware, Inc. or its affiliates.  All rights reserved.
 %%
 
-%% @hidden
+%% @private
 
 -module(horus_utils).
 

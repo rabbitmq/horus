@@ -67,9 +67,13 @@
          to_fun/1,
          exec/2]).
 
+%% For internal use only.
+-export([override_object_code/2,
+         forget_overridden_object_code/1,
+         do_get_object_code/1]).
+
 -ifdef(TEST).
 -export([standalone_fun_cache_key/5,
-         override_object_code/2,
          get_object_code/1,
          decode_line_chunk/2,
          compile/1,
@@ -292,6 +296,7 @@ fun((#{calls := #{Call :: mfa() => true},
                 lines_in_progress :: #lines{} | undefined,
                 strings_in_progress :: binary() | undefined,
                 lambdas_in_progress :: [#lambda{}] | undefined,
+                asm_in_progress_from :: code_server | cover | undefined,
                 mfa_in_progress :: mfa() | undefined,
                 function_in_progress :: atom() | undefined,
                 next_label = 1 :: label(),
@@ -1198,6 +1203,12 @@ pass1_process_function_code(
       Instructions :: [beam_instr()],
       State :: #state{}.
 
+pass1_process_instructions(
+  Instructions,
+  #state{mfa_in_progress = MFA,
+         asm_in_progress_from = cover} = State) ->
+    Instructions1 = horus_cover:isolate_cover_instructions(MFA, Instructions),
+    pass1_process_instructions(Instructions1, State, []);
 pass1_process_instructions(Instructions, State) ->
     pass1_process_instructions(Instructions, State, []).
 
@@ -1216,6 +1227,22 @@ pass1_process_instructions(Instructions, State) ->
 %% detected from a function clause by the first group.
 
 %% First group.
+
+pass1_process_instructions(
+  [{'$cover', Instructions} | Rest],
+  #state{lines_in_progress = Lines} = State,
+  Result) ->
+    Instructions1 = lists:reverse(Instructions),
+    Instructions2 = lists:filtermap(
+                      fun
+                          ({line, Index} = Instr)
+                            when is_integer(Index) ->
+                              maybe_decode_line_instr(Instr, Lines);
+                          (Instruction) ->
+                              {true, Instruction}
+                      end, Instructions1),
+    Result1 = Instructions2 ++ Result,
+    pass1_process_instructions(Rest, State, Result1);
 
 pass1_process_instructions(
   [{arithfbif, Operation, Fail, Args, Dst} | Rest],
@@ -1453,23 +1480,13 @@ pass1_process_instructions(
               end,
     pass1_process_instructions(Rest, State1, Result1);
 pass1_process_instructions(
-  [{line, Index} | Rest],
+  [{line, Index} = Instruction | Rest],
   #state{lines_in_progress = Lines} = State,
-  Result) ->
-    case Lines of
-        #lines{items = Items, names = Names} ->
-            %% We could decode the "Line" beam chunk which contains the mapping
-            %% between `Index' in the instruction decoded by `beam_disasm' and
-            %% the actual location (filename + line number). Therefore we can
-            %% generate the correct `line' instruction.
-            #line{name_index = NameIndex,
-                  location = Location} = lists:nth(Index + 1, Items),
-            Name = lists:nth(NameIndex + 1, Names),
-            Line = {line, [{location, Name, Location}]},
-            pass1_process_instructions(Rest, State, [Line | Result]);
-        undefined ->
-            %% Drop this instruction as we don't have the "Line" beam chunk to
-            %% decode it.
+  Result) when is_integer(Index) ->
+    case maybe_decode_line_instr(Instruction, Lines) of
+        {true, Instruction1} ->
+            pass1_process_instructions(Rest, State, [Instruction1 | Result]);
+        false ->
             pass1_process_instructions(Rest, State, Result)
     end;
 pass1_process_instructions(
@@ -1847,38 +1864,42 @@ disassemble_module(Module, #state{checksums = Checksums} = State) ->
             {#beam_file_ext{lines = Lines,
                             strings = Strings,
                             lambdas = Lambdas} = BeamFileRecord,
-             Checksum} = disassemble_module1(Module, Checksum),
+             Checksum,
+             CodeFrom} = disassemble_module1(Module, Checksum),
 
             State1 = State#state{lines_in_progress = Lines,
                                  strings_in_progress = Strings,
-                                 lambdas_in_progress = Lambdas},
+                                 lambdas_in_progress = Lambdas,
+                                 asm_in_progress_from = CodeFrom},
             {BeamFileRecord, State1};
         _ ->
             {#beam_file_ext{lines = Lines,
                             strings = Strings} = BeamFileRecord,
-             Checksum} = disassemble_module1(Module, undefined),
+             Checksum,
+             CodeFrom} = disassemble_module1(Module, undefined),
             ?assert(is_binary(Checksum)),
 
             Checksums1 = Checksums#{Module => Checksum},
             State1 = State#state{checksums = Checksums1,
                                  lines_in_progress = Lines,
-                                 strings_in_progress = Strings},
+                                 strings_in_progress = Strings,
+                                 asm_in_progress_from = CodeFrom},
             {BeamFileRecord, State1}
     end.
 
 disassemble_module1(Module, Checksum) when is_binary(Checksum) ->
     Key = ?ASM_CACHE_KEY(Module, Checksum),
     case persistent_term:get(Key, undefined) of
-        #beam_file_ext{} = BeamFileRecord ->
-            {BeamFileRecord, Checksum};
+        {#beam_file_ext{} = BeamFileRecord, CodeFrom} ->
+            {BeamFileRecord, Checksum, CodeFrom};
         undefined ->
-            {Module, Beam, _} = get_object_code(Module),
+            {Module, Beam, _, CodeFrom} = get_object_code(Module),
             {ok, {Module, ActualChecksum}} = beam_lib:md5(Beam),
             case ActualChecksum of
                 Checksum ->
                     BeamFileRecord = do_disassemble_and_cache(
-                                       Module, Checksum, Beam),
-                    {BeamFileRecord, Checksum};
+                                       Module, Checksum, Beam, CodeFrom),
+                    {BeamFileRecord, Checksum, CodeFrom};
                 _ ->
                     CompileInfoFromFun = Module:module_info(compile),
                     CompileInfoOnDisk = get_and_decode_compile_chunk(
@@ -1888,8 +1909,9 @@ disassemble_module1(Module, Checksum) when is_binary(Checksum) ->
                     case IsAcceptable of
                         true ->
                             BeamFileRecord = do_disassemble_and_cache(
-                                               Module, Checksum, Beam),
-                            {BeamFileRecord, Checksum};
+                                               Module, Checksum, Beam,
+                                               CodeFrom),
+                            {BeamFileRecord, Checksum, CodeFrom};
                         false ->
                             ?horus_misuse(
                                mismatching_module_checksum,
@@ -1902,12 +1924,20 @@ disassemble_module1(Module, Checksum) when is_binary(Checksum) ->
             end
     end;
 disassemble_module1(Module, undefined) ->
-    {Module, Beam, _} = get_object_code(Module),
+    {Module, Beam, _, CodeFrom} = get_object_code(Module),
     {ok, {Module, Checksum}} = beam_lib:md5(Beam),
-    BeamFileRecord = do_disassemble_and_cache(Module, Checksum, Beam),
-    {BeamFileRecord, Checksum}.
+    BeamFileRecord = do_disassemble_and_cache(
+                       Module, Checksum, Beam, CodeFrom),
+    {BeamFileRecord, Checksum, CodeFrom}.
 
--ifdef(TEST).
+-spec get_object_code(Module) -> Ret when
+      Module :: module(),
+      Ret :: {Module, Beam, Filename, CodeFrom},
+      Beam :: binary(),
+      Filename :: string(),
+      CodeFrom :: code_server | cover.
+%% @private
+
 -define(OBJECT_CODE_KEY(Module), {horus, object_code, Module}).
 
 override_object_code(Module, Beam) ->
@@ -1915,27 +1945,41 @@ override_object_code(Module, Beam) ->
     persistent_term:put(Key, Beam),
     ok.
 
+forget_overridden_object_code(Module) ->
+    Key = ?OBJECT_CODE_KEY(Module),
+    _ = persistent_term:erase(Key),
+    ok.
+
 get_object_code(Module) ->
     Key = ?OBJECT_CODE_KEY(Module),
     case persistent_term:get(Key, undefined) of
         undefined -> do_get_object_code(Module);
-        Beam      -> {Module, Beam, ""}
+        Beam      -> {Module, Beam, "", code_server}
     end.
--else.
-get_object_code(Module) ->
-    do_get_object_code(Module).
--endif.
+
+-spec do_get_object_code(Module) -> Ret when
+      Module :: module(),
+      Ret :: {Module, Beam, Filename, CodeFrom},
+      Beam :: binary(),
+      Filename :: string(),
+      CodeFrom :: code_server | cover.
+%% @private
 
 do_get_object_code(Module) ->
     case cover:is_compiled(Module) of
-        false            -> get_object_code_from_code_server(Module);
-        {file, Filename} -> get_object_code_from_cover(Module, Filename)
+        false ->
+            get_object_code_from_code_server(Module);
+        {file, Filename} ->
+            get_object_code_from_cover(Module, Filename);
+        {error, not_main_node} ->
+            CoverMainNode = cover:get_main_node(),
+            erpc:call(CoverMainNode, ?MODULE, do_get_object_code, [Module])
     end.
 
 get_object_code_from_code_server(Module) ->
     case code:get_object_code(Module) of
         {Module, Beam, Filename} ->
-            {Module, Beam, Filename};
+            {Module, Beam, Filename, code_server};
         error ->
             ?horus_misuse(
                module_not_found,
@@ -1954,7 +1998,7 @@ get_object_code_from_cover(Module, Filename) ->
     %% module.
     case ets:lookup(?BINARY_TABLE, Module) of
         [{Module, Beam}] ->
-            {Module, Beam, Filename};
+            {Module, Beam, Filename, cover};
         [] ->
             %% The cover-compiled module may have been removed from the ETS
             %% table between the time we called `cover:is_compiled/1'. Let's
@@ -1962,10 +2006,10 @@ get_object_code_from_cover(Module, Filename) ->
             do_get_object_code(Module)
     end.
 
-do_disassemble_and_cache(Module, Checksum, Beam) ->
+do_disassemble_and_cache(Module, Checksum, Beam, CodeFrom) ->
     Key = ?ASM_CACHE_KEY(Module, Checksum),
     BeamFileRecordExt = do_disassemble(Beam),
-    persistent_term:put(Key, BeamFileRecordExt),
+    persistent_term:put(Key, {BeamFileRecordExt, CodeFrom}),
     BeamFileRecordExt.
 
 do_disassemble(Beam) ->
@@ -2373,6 +2417,18 @@ fix_type_tagged_beam_registers(TypesInfo) when is_list(TypesInfo) ->
 
 get_reg_from_type_tagged_beam_register({tr, Reg, _}) -> Reg;
 get_reg_from_type_tagged_beam_register(Reg)          -> Reg.
+
+maybe_decode_line_instr({line, Index}, #lines{items = Items, names = Names}) ->
+    %% We could decode the "Line" beam chunk which contains the mapping
+    %% between `Index' in the instruction decoded by `beam_disasm' and the
+    %% actual location (filename + line number). Therefore we can generate the
+    %% correct `line' instruction.
+    #line{name_index = NameIndex,
+          location = Location} = lists:nth(Index + 1, Items),
+    Name = lists:nth(NameIndex + 1, Names),
+    {true, {line, [{location, Name, Location}]}};
+maybe_decode_line_instr({line, _Index}, undefined) ->
+    false.
 
 -spec ensure_instruction_is_permitted(Instruction, State) ->
     State when
