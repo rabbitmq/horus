@@ -13,6 +13,8 @@ in a new module at runtime.
 The goal is to have a storable and transferable function which does not depend
 on the availability of the modules that defined it or were called.
 
+<a class="github-fork-ribbon" href="https://github.com/rabbitmq/horus" data-ribbon="Fork me on GitHub" title="Fork me on GitHub">Fork me on GitHub</a>
+
 == How does it work? ==
 
 To achieve that goal, Horus extracts the assembly code of the anonymous
