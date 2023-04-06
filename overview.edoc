@@ -6,18 +6,32 @@
 @version Development branch
 
 @doc
-Horus is a library that extracts an anonymous function's code and creates a
-standalone version of it in a new module at runtime.
+Horus is a library that extracts an anonymous function's code as well as the
+code of the all the functions it calls, and creates a standalone version of it
+in a new module at runtime.
 
 The goal is to have a storable and transferable function which does not depend
-on the availability of the module that defined it.
+on the availability of the modules that defined it or were called.
+
+<a class="github-fork-ribbon" href="https://github.com/rabbitmq/horus" data-ribbon="Fork me on GitHub" title="Fork me on GitHub">Fork me on GitHub</a>
 
 == How does it work? ==
 
 To achieve that goal, Horus extracts the assembly code of the anonymous
-function and creates a standalone Erlang module based on it. This module can be
-stored, transfered to another Erlang node and executed anywhere without the
-presence of the initial anonymous function's module.
+function, watches all calls it does and recursively extracts the assembly code
+of other called functions. When complete, it creates a standalone Erlang module
+based on it. This module can be stored, transfered to another Erlang node and
+executed anywhere without the presence of the initial anonymous function's
+module.
+
+If the extracted function calls directly or indirectly modules from the `erts',
+`kernel' or `stdlib' applications, the called functions are not extracted.
+That's ok because the behavior of Erlang/OTP modules rarely changes and they
+will be available. Therefore, there is little value in extracting that code.
+
+While processing the assembly instructions and watching function calls, Horus
+can use callbacks provided by the caller to determine if instructions and calls
+are allowed or denied.
 
 === The extraction process ===
 
@@ -172,3 +186,56 @@ Horus generates the following assembly form:
     {call_ext_only,2,{extfunc,erlang,get_module_info,2}}]}],
  7}}}
 '''
+
+== Why not store/send the module defining the function? ==
+
+Here is a description of the usecase that started it all.
+
+Horus doesn't extract the anonymous function code only, but all the functions
+it calls, whether they sit in the same module or another module. At the same
+time, it will "analyse" the code and give the caller (through callbacks) the
+opportunity to deny specific operations or function calls.
+
+For instance, Khepri — which Horus was created for initially — needs to do that
+as part of the transaction functions feature. In case you don't know, Khepri is
+a key/value store where keys are organized in a tree. The replication of data
+relies on the Raft algorithm. Raft is based on state machines where a leader
+state machine sends a journal of commands to followers. The leader and follower
+state machines modify their state after applying comands and they must all
+reach the exact same state. They also must reach the same state again if the
+journal of commands needs to be replayed. You can learn more from the
+<a href="https://rabbitmq.github.io/khepri/">Khepri documentation</a>.
+
+For transaction functions to fullfill this "reach same state" constraint no
+matter the node running the transaction function, no matter the date/time or
+the number of times the function is executed, we need to deny any operations
+with side effects or taking input from or having output to something external
+to the state machine. For example:
+
+<ul>
+<li>the transaction function can't send or receive messages to/from other
+processes</li>
+<li>it can't perform any disk I/O</li>
+<li>it can't use e.g. `persistent_term', `self()', `nodes()', the current time,
+etc.</li>
+</ul>
+
+We also need to ensure that the transaction function remains the same if it is
+executed again in the future, even after an upgrade.
+
+This is where Horus comes into play. Its role is to collect the entire code of
+the transaction function even if it is split into multiple Erlang functions,
+accross multiple Erlang modules. This is to prevent that an upgrade changes the
+behavior of a transaction function.
+
+While Horus collects the code, it uses callbacks provided by the caller to let
+it say if an operation is allowed or denied. Khepri will deny messages being
+sent or received, calls to functions such as `self()' or `node()' and calls to
+any functions Khepri doesn't approve.
+
+By default, Horus will stop following calls (for code extraction) when the code
+calls a module provided by the `erts', `kernel' or `stdlib' applications. The
+collected code will keep a regular external function call in this case. This is
+to avoid the extraction of code we know have no side effects and the behavior
+will not change between upgrades. Also because some functions can't be
+extracted because they are simple placeholders replaced by NIFs at runtime.
