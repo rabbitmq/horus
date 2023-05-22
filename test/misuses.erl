@@ -13,7 +13,9 @@
 -include("src/horus_fun.hrl").
 
 -dialyzer([{no_missing_calls,
-            [unknown_function_1_test/0,
+            [unknown_module_1_test/0,
+             unknown_module_2_test/0,
+             unknown_function_1_test/0,
              unknown_function_2_test/0,
              unexported_function_1_test/0,
              unexported_function_2_test/0]},
