@@ -1040,19 +1040,29 @@ exec(Fun, Args) ->
 
 load_standalone_fun(
   #horus_fun{module = Module, beam = Beam} = StandaloneFun) ->
-    case code:is_loaded(Module) of
+    case horus_utils:is_module_loaded(Module) of
+        true ->
+            ok;
         false ->
-            case code:load_binary(Module, ?MODULE_STRING, Beam) of
-                {module, _} ->
+            Lock = {{horus, load, Module}, self()},
+            global:set_lock(Lock, [node()]),
+            case horus_utils:is_module_loaded(Module) of
+                true ->
+                    global:del_lock(Lock, [node()]),
                     ok;
-                {error, _} = Error ->
-                    ?horus_misuse(
-                       invalid_generated_module,
-                       #{horus_fun => StandaloneFun,
-                         error => Error})
-            end;
-        _ ->
-            ok
+                false ->
+                    Ret = code:load_binary(Module, ?MODULE_STRING, Beam),
+                    global:del_lock(Lock, [node()]),
+                    case Ret of
+                        {module, _} ->
+                            ok;
+                        {error, _} = Error ->
+                            ?horus_misuse(
+                               invalid_generated_module,
+                               #{horus_fun => StandaloneFun,
+                                 error => Error})
+                    end
+            end
     end.
 
 -spec to_fun(StandaloneFun) -> Fun when
