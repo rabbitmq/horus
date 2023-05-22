@@ -278,7 +278,8 @@ fun((#{calls := #{Call :: mfa() => true},
 -export_type([horus_fun/0,
               options/0,
               fun_name_mapping/0,
-              debug_info/0]).
+              debug_info/0,
+              beam_instr/0]).
 
 -type all_calls_map() :: #{mfa() => true}.
 %% The `all_calls' map, used to calls made by the extracted function and all
