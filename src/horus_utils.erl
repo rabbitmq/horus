@@ -9,9 +9,51 @@
 
 -module(horus_utils).
 
--export([should_process_module/1,
+-export([is_module_loaded/1,
+         should_process_module/1,
          init_list_of_modules_to_skip/0,
          clear_list_of_modules_to_skip/0]).
+
+-spec is_module_loaded(Module) -> IsLoaded when
+      Module :: module(),
+      IsLoaded :: boolean().
+%% @doc Indicates if a module is loaded or not.
+%%
+%% For Erlang/OTP up to 25, it is an alternative to `code:is_loaded/1' because
+%% it is a synchronous call to the code server in these versions.
+%%
+%% For Erlang/OTP 26+, this is a simply wrapper.
+%%
+%% @end
+
+%% We use a compile-time check instead of a runtime check because if the
+%% application is compiled with Erlang/OTP 25, `is_module_loaded/1' works
+%% equally well on Erlang/OTP 26.
+%%
+%% If the application is compiled with Erlang/OTP26, then it won't load on
+%% Erlang/OTP 25 anyway.
+
+-if(?OTP_RELEASE >= 26).
+is_module_loaded(Module) ->
+    %% Starting from Erlang/OTP 26, this is a query of a protected ETS table.
+    case code:is_loaded(Module) of
+        {file, _} -> true;
+        false     -> false
+    end.
+-else.
+is_module_loaded(Module) ->
+    %% Up to Erlang/OTP 25, this is a synchronous call to the Code server. This
+    %% is a contention point, so let's use the undocumented
+    %% `erlang:get_module_info/2' BIF (which is behind any
+    %% `Module:module_info/1') to test the presence of the module.
+    try
+        _ = erlang:get_module_info(Module, md5),
+        true
+    catch
+        error:badarg ->
+            false
+    end.
+-endif.
 
 %% -------------------------------------------------------------------
 %% Helpers to standalone function extraction.
