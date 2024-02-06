@@ -68,7 +68,7 @@ Using Mix:
 # In mix.exs
 defp deps do
   [
-    :horus, "0.2.4"}
+    {:horus, "0.2.4"}
   ]
 end
 ```
