@@ -54,8 +54,15 @@ isolate_cover_instructions(_MFA, Instructions) ->
     %% We first get the cached cover instructions patterns (or determine these
     %% patterns if this is the first time), then we inspect the given
     %% instructions to see if we find cover-specific instructions.
-    CoverPatterns = get_cover_instructions_patterns(),
-    isolate_cover_instructions(Instructions, CoverPatterns, []).
+    case get_cover_instructions_patterns() of
+        [] ->
+            %% Starting in Erlang/OTP 27, coverage can be handled with native
+            %% coverage support when the JIT is enabled, so the instructions
+            %% may not be modified by `cover'.
+            Instructions;
+        CoverPatterns ->
+            isolate_cover_instructions(Instructions, CoverPatterns, [])
+    end.
 
 isolate_cover_instructions(Instructions, CoverPatterns, Result)
   when length(Instructions) < length(CoverPatterns) ->
@@ -198,7 +205,7 @@ determine_cover_patterns() ->
     CoverMatchSpecs.
 
 -spec determine_cover_patterns_locally() -> CoverPatterns when
-      CoverPatterns :: [any(), ...].
+      CoverPatterns :: [any()].
 %% @doc Computes the cover-specific instructions patterns.
 %%
 %% To achieve this, the function uses a very basic module (see
@@ -277,14 +284,15 @@ do_determine_cover_patterns(CoveredBody, RegularBody) ->
     %% We ensure the cover-specific instructions were found. If the result is
     %% an empty list, it means we compared two identical standalone functions,
     %% meaning something went wrong with the compilation.
-    case CoveredStart of
-        [] ->
-            ?horus_misuse(
-               failed_to_determine_cover_specific_instructions,
-               #{});
-        _ ->
-            CoveredStart
-    end.
+    CoveredStart.
+    %% case CoveredStart of
+    %%     [] ->
+    %%         ?horus_misuse(
+    %%            failed_to_determine_cover_specific_instructions,
+    %%            #{});
+    %%     _ ->
+    %%         CoveredStart
+    %% end.
 
 eliminate_common_start(
   [Instruction | CoveredRest], [Instruction | RegularRest]) ->
@@ -320,7 +328,7 @@ instructions_to_patterns(CoveredStart) ->
 
 -spec determine_cover_patterns_remotely(Node) -> CoverPatterns when
       Node :: node(),
-      CoverPatterns :: [any(), ...].
+      CoverPatterns :: [any()].
 %% @doc Calls `Node' to determine the cover-specific instructions.
 
 determine_cover_patterns_remotely(Node) ->
