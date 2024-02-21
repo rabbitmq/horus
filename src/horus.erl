@@ -1700,7 +1700,8 @@ pass1_process_instructions(
     Instruction1 = setelement(4, Instruction, Args1),
     pass1_process_instructions(Rest, State1, [Instruction1 | Result]);
 pass1_process_instructions(
-  [{update_record, _Hint, Size, Src, _Dst, _Updates} = Instruction | Rest],
+  [{update_record, _Hint, Size,
+    {_RegKind, _RegNumber} = Src, _Dst, _Updates} = Instruction | Rest],
   State,
   Result) ->
     State1 = ensure_instruction_is_permitted(Instruction, State),
