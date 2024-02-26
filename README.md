@@ -132,7 +132,8 @@ rebar3 as test dialyzer
 
 ## Copyright and License
 
-© 2021-2023 VMware, Inc. or its affiliates.
+(c) 2021-2024 Broadcom. All Rights Reserved. The term "Broadcom" refers to
+Broadcom Inc. and/or its subsidiaries.
 
 This work is dual-licensed under the Apache License 2.0 and the Mozilla Public
 License 2.0. You can choose between one of them if you use this work.
