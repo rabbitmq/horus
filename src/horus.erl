@@ -324,6 +324,19 @@ fun((#{calls := #{Call :: mfa() => true},
 
 -define(SF_ENTRYPOINT, run).
 
+-if(?OTP_RELEASE >= 27).
+-define(IF_NATIVE_COVERAGE_IS_SUPPORTED(IfSupportedBlock, ElseBlock),
+        (case code:coverage_support() of
+             true ->
+                 IfSupportedBlock;
+             false ->
+                 ElseBlock
+         end)).
+-else.
+-define(IF_NATIVE_COVERAGE_IS_SUPPORTED(_IfSupportedBlock, ElseBlock),
+        (ElseBlock)).
+-endif.
+
 -spec to_standalone_fun(Fun) -> StandaloneFun when
       Fun :: fun(),
       StandaloneFun :: horus_fun().
@@ -1218,8 +1231,17 @@ pass1_process_instructions(
   Instructions,
   #state{mfa_in_progress = MFA,
          asm_in_progress_from = cover} = State) ->
-    Instructions1 = horus_cover:isolate_cover_instructions(MFA, Instructions),
-    pass1_process_instructions(Instructions1, State, []);
+    ?IF_NATIVE_COVERAGE_IS_SUPPORTED(
+      begin
+          %% In Erlang/OTP 27+ with JIT, cover does not inject counters, so
+          %% there are no significant cover instructions to isolate.
+          pass1_process_instructions(Instructions, State, []);
+      end,
+      begin
+          Instructions1 = horus_cover:isolate_cover_instructions(
+                            MFA, Instructions),
+          pass1_process_instructions(Instructions1, State, [])
+      end);
 pass1_process_instructions(Instructions, State) ->
     pass1_process_instructions(Instructions, State, []).
 
