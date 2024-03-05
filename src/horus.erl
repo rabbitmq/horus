@@ -1235,7 +1235,7 @@ pass1_process_instructions(
       begin
           %% In Erlang/OTP 27+ with JIT, cover does not inject counters, so
           %% there are no significant cover instructions to isolate.
-          pass1_process_instructions(Instructions, State, []);
+          pass1_process_instructions(Instructions, State, [])
       end,
       begin
           Instructions1 = horus_cover:isolate_cover_instructions(
