@@ -1704,8 +1704,9 @@ pass1_process_instructions(
   State,
   Result) ->
     State1 = ensure_instruction_is_permitted(Instruction, State),
+    Src1 = get_reg_from_type_tagged_beam_register(Src),
     Type = {t_tuple, Size, true, #{}},
-    VarInfo = {var_info, Src, [{type, Type}]},
+    VarInfo = {var_info, Src1, [{type, Type}]},
     Comment = {'%', VarInfo},
     pass1_process_instructions(Rest, State1, [Instruction, Comment | Result]);
 

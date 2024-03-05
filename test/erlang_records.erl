@@ -12,17 +12,19 @@
 -include("test/helpers.hrl").
 
 -record(my_record, {field}).
+-record(pair, {a, b}).
 
 create_record_test() ->
-    StandaloneFun = ?make_standalone_fun(#my_record{field = ok}),
+    Field = helpers:ensure_not_optimized(ok),
+    StandaloneFun = ?make_standalone_fun(#my_record{field = Field}),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(#my_record{field = ok}, horus:exec(StandaloneFun, [])).
+    ?assertEqual(#my_record{field = Field}, horus:exec(StandaloneFun, [])).
 
 update_record_test() ->
-    Record = helpers:ensure_not_optimized(#my_record{field = 1}),
-    StandaloneFun = ?make_standalone_fun(Record#my_record{field = 2}),
+    Record = helpers:ensure_not_optimized(#pair{a = 123, b = 456}),
+    StandaloneFun = ?make_standalone_fun(Record#pair{a = 789}),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(#my_record{field = 2}, horus:exec(StandaloneFun, [])).
+    ?assertEqual(#pair{a = 789, b = 456}, horus:exec(StandaloneFun, [])).
 
 match_record_test() ->
     Record = helpers:ensure_not_optimized(#my_record{field = ok}),
