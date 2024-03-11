@@ -5,7 +5,8 @@
   %%   * README.md
   %%   * doc/overview.edoc
   %% Pay attention to links in particular.
-  {vsn, "0.2.4"},
+  {vsn, "0.2.5"},
+  {registered, []},
   {applications,
    [erts,
     kernel,
