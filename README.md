@@ -51,7 +51,7 @@ Using Rebar:
 
 ```erlang
 %% In rebar.config
-{deps, [{horus, "0.2.5"}]}.
+{deps, [{horus, "0.2.6"}]}.
 ```
 
 Using Erlang.mk:
@@ -59,7 +59,7 @@ Using Erlang.mk:
 ```make
 # In your Makefile
 DEPS += horus
-dep_horus = hex 0.2.5
+dep_horus = hex 0.2.6
 ```
 
 Using Mix:
@@ -68,7 +68,7 @@ Using Mix:
 # In mix.exs
 defp deps do
   [
-    {:horus, "0.2.5"}
+    {:horus, "0.2.6"}
   ]
 end
 ```

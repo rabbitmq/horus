@@ -3,7 +3,7 @@
 @author The RabbitMQ team <info@rabbitmq.com>
 @copyright 2021-2024 Broadcom. All Rights Reserved. The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
 @title The Horus library
-@version 0.2.5
+@version 0.2.6
 
 @doc
 Horus is a library that extracts an anonymous function's code as well as the
