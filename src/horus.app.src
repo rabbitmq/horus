@@ -16,7 +16,7 @@
    ]},
   {env, [{skip_collection_froms_apps, []}]},
   {files, [
-    "README.md", "LICENSE", "mix.exs",
+    "README.md", "LICENSE-Apache-2.0", "LICENSE-MPL-2.0", "mix.exs",
     "rebar.config", "rebar.lock", "src", "include", "priv"]},
   {modules, []},
   {licenses, ["Apache-2.0", "MPL-2.0"]},
