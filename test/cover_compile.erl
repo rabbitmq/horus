@@ -9,9 +9,17 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+-include("src/horus_cover.hrl").
 -include("src/horus_fun.hrl").
 
 cover_compilation_works_test() ->
+    ?IF_NATIVE_COVERAGE_IS_SUPPORTED(
+       begin
+           _ = code:set_coverage_mode(line_counters),
+           ok
+       end,
+       ok),
+
     Module = cover_compiled_mod1,
     Arg = arg,
     Ret = Module:run(Arg),
@@ -51,8 +59,16 @@ cover_compilation_works_test() ->
     ?assertEqual({ok, InitialState}, cover:analyse(Module)),
 
     StandaloneFun2 = horus:to_standalone_fun(Fun, #{debug_info => true}),
-    ?assertEqual(Ret, horus:exec(StandaloneFun2, [Arg])),
-    ?assertEqual({ok, Analysis}, cover:analyse(Module)),
+    ?IF_NATIVE_COVERAGE_IS_SUPPORTED(
+       begin
+           ?debugMsg(
+              "Coverage support testing skipped as native coverage counters "
+              "can't be modified externally")
+       end,
+       begin
+           ?assertEqual(Ret, horus:exec(StandaloneFun2, [Arg])),
+           ?assertEqual({ok, Analysis}, cover:analyse(Module))
+       end),
 
     ok = cover:reset(Module),
 
@@ -75,6 +91,13 @@ cover_compilation_works_test() ->
     ok.
 
 cover_on_remote_node_works_test() ->
+    ?IF_NATIVE_COVERAGE_IS_SUPPORTED(
+       begin
+           _ = code:set_coverage_mode(line_counters),
+           ok
+       end,
+       ok),
+
     ok = helpers:start_epmd(),
     {ok, _} = net_kernel:start(?FUNCTION_NAME, #{name_domain => shortnames}),
     _ = cover:start(),
@@ -132,8 +155,16 @@ cover_on_remote_node_works_test() ->
     StandaloneFun2 = erpc:call(
                        Node,
                        horus, to_standalone_fun, [Fun, #{debug_info => true}]),
-    ?assertEqual(Ret, erpc:call(Node, horus, exec, [StandaloneFun2, [Arg]])),
-    ?assertEqual({ok, Analysis}, cover:analyse(Module)),
+    ?IF_NATIVE_COVERAGE_IS_SUPPORTED(
+       begin
+           ?debugMsg(
+              "Coverage support testing skipped as native coverage counters "
+              "can't be modified externally")
+       end,
+       begin
+           ?assertEqual(Ret, erpc:call(Node, horus, exec, [StandaloneFun2, [Arg]])),
+           ?assertEqual({ok, Analysis}, cover:analyse(Module))
+       end),
 
     ok = cover:reset(Module),
 

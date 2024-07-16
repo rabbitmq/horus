@@ -59,6 +59,7 @@
 -include_lib("stdlib/include/assert.hrl").
 
 -include("include/horus.hrl").
+-include("src/horus_cover.hrl").
 -include("src/horus_fun.hrl").
 -include("src/horus_error.hrl").
 
@@ -323,19 +324,6 @@ fun((#{calls := #{Call :: mfa() => true},
 %% exception.
 
 -define(SF_ENTRYPOINT, run).
-
--if(?OTP_RELEASE >= 27).
--define(IF_NATIVE_COVERAGE_IS_SUPPORTED(IfSupportedBlock, ElseBlock),
-        (case code:coverage_support() of
-             true ->
-                 IfSupportedBlock;
-             false ->
-                 ElseBlock
-         end)).
--else.
--define(IF_NATIVE_COVERAGE_IS_SUPPORTED(_IfSupportedBlock, ElseBlock),
-        (ElseBlock)).
--endif.
 
 -spec to_standalone_fun(Fun) -> StandaloneFun when
       Fun :: fun(),
