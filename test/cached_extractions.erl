@@ -11,6 +11,9 @@
 
 -include("test/helpers.hrl").
 
+-dialyzer({nowarn_function, [my_fun_module/1,
+                             modified_module_causes_cache_miss_test/0]}).
+
 local_fun_test() ->
     Fun = fun() -> ok end,
     StandaloneFun1 = horus:to_standalone_fun(Fun),
