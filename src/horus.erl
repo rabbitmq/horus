@@ -1523,6 +1523,16 @@ pass1_process_instructions(
             pass1_process_instructions(Rest, State, Result)
     end;
 pass1_process_instructions(
+  [{executable_line, Index, _Unknown} = Instruction | Rest],
+  #state{lines_in_progress = Lines} = State,
+  Result) when is_integer(Index) ->
+    case maybe_decode_line_instr(Instruction, Lines) of
+        {true, Instruction1} ->
+            pass1_process_instructions(Rest, State, [Instruction1 | Result]);
+        false ->
+            pass1_process_instructions(Rest, State, Result)
+    end;
+pass1_process_instructions(
   [{make_fun2, {Module, Name, Arity}, _, _, _} = Instruction | Rest],
   State,
   Result) ->
@@ -2452,7 +2462,8 @@ fix_type_tagged_beam_registers(TypesInfo) when is_list(TypesInfo) ->
 get_reg_from_type_tagged_beam_register({tr, Reg, _}) -> Reg;
 get_reg_from_type_tagged_beam_register(Reg)          -> Reg.
 
-maybe_decode_line_instr({line, Index}, #lines{items = Items, names = Names}) ->
+maybe_decode_line_instr(
+  {line, Index}, #lines{items = Items, names = Names}) ->
     %% We could decode the "Line" beam chunk which contains the mapping
     %% between `Index' in the instruction decoded by `beam_disasm' and the
     %% actual location (filename + line number). Therefore we can generate the
@@ -2461,7 +2472,14 @@ maybe_decode_line_instr({line, Index}, #lines{items = Items, names = Names}) ->
           location = Location} = lists:nth(Index + 1, Items),
     Name = lists:nth(NameIndex + 1, Names),
     {true, {line, [{location, Name, Location}]}};
-maybe_decode_line_instr({line, _Index}, undefined) ->
+maybe_decode_line_instr(
+  {executable_line, Index, Loc}, #lines{items = Items, names = Names}) ->
+    %% Same as above but for the `executable_line' instruction.
+    #line{name_index = NameIndex,
+          location = Location} = lists:nth(Index + 1, Items),
+    Name = lists:nth(NameIndex + 1, Names),
+    {true, {executable_line, [{location, Name, Location}], Loc}};
+maybe_decode_line_instr(_, undefined) ->
     false.
 
 -spec ensure_instruction_is_permitted(Instruction, State) ->
