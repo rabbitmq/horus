@@ -1,7 +1,7 @@
 # Horus: anonymous function to standalone module
 
 [![Hex.pm](https://img.shields.io/hexpm/v/horus)](https://hex.pm/packages/horus/)
-[![Test](https://github.com/rabbitmq/horus/actions/workflows/test.yaml/badge.svg)](https://github.com/rabbitmq/horus/actions/workflows/test.yaml)
+[![Test](https://github.com/rabbitmq/horus/actions/workflows/test-and-release.yaml/badge.svg)](https://github.com/rabbitmq/horus/actions/workflows/test-and-release.yaml)
 [![Codecov](https://codecov.io/gh/rabbitmq/horus/branch/main/graph/badge.svg?token=R0OGKZ2RK2)](https://codecov.io/gh/rabbitmq/horus)
 
 Horus is a library that extracts an anonymous function's code as well as the
