@@ -1998,7 +1998,7 @@ get_object_code(Module) ->
 %% @private
 
 do_get_object_code(Module) ->
-    case cover:is_compiled(Module) of
+    case is_cover_compiled(Module) of
         false ->
             get_object_code_from_code_server(Module);
         {file, Filename} ->
@@ -2006,6 +2006,18 @@ do_get_object_code(Module) ->
         {error, not_main_node} ->
             CoverMainNode = cover:get_main_node(),
             erpc:call(CoverMainNode, ?MODULE, do_get_object_code, [Module])
+    end.
+
+is_cover_compiled(Module) ->
+    try
+        cover:is_compiled(Module)
+    catch
+        error:{badmatch, {error, {already_started, _}}} ->
+            %% The code in `cover' that checks if the cover server is started
+            %% seem racy. We get an exception if it thinks it has to start it
+            %% but it is already started. In this case, we retry the call.
+            timer:sleep(100),
+            cover:is_compiled(Module)
     end.
 
 get_object_code_from_code_server(Module) ->
