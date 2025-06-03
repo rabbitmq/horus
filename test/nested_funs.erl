@@ -148,7 +148,7 @@ multiple_nested_higher_order_functions_test() ->
 
     Sets = sets:from_list([a, b]),
     Ret2 = Ret1(Sets, path, change),
-    ?assertEqual([{change, {path, a}}, {change, {path, b}}], Ret2).
+    ?assertEqual([{change, {path, a}}, {change, {path, b}}], lists:sort(Ret2)).
 
 projection_fun_for_sets(MapFun) ->
     ChangesFromSet =
