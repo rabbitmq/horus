@@ -111,6 +111,13 @@
                              split_comments/1,
                              split_comments/2,
                              merge_comments/2]}).
+%% FIXME: compile:file/2 is incorrectly specified because when an option like
+%% `S' is set to generate assembly instead of beam and it is asked to returned
+%% the result instead of writing a file, it returns a list of tuple, not only
+%% a binary.
+-dialyzer({nowarn_function, [erl_eval_fun_to_asm/4,
+                             erl_eval_fun_to_asm1/4,
+                             asm_to_beam_file_record/1]}).
 
 -type fun_info() :: #{arity => arity(),
                       env => any(),
@@ -1503,11 +1510,24 @@ pass1_process_instructions(
 %% Second group.
 
 pass1_process_instructions(
-  [{Call, Arity, {Module, Name, Arity} = MFA} = Instruction | Rest],
+  [{Call, Arity, CalledFunction} = Instruction | Rest],
   State,
   Result)
   when Call =:= call orelse Call =:= call_only ->
-    State1 = ensure_instruction_is_permitted(Instruction, State),
+    Instruction1 = case CalledFunction of
+                       {f, Label} ->
+                           %% This variant of the instruction happens when the
+                           %% input is the original assembly (the `.S' file is
+                           %% available).
+                           MFA0 = label_to_mfa(Label, State),
+                           setelement(3, Instruction, MFA0);
+                       {_M, _F, _A} ->
+                           %% This variant of the instruction happens when the
+                           %% input comes from `beam_disasm'.
+                           Instruction
+                    end,
+    {Module, Name, Arity} = MFA = element(3, Instruction1),
+    State1 = ensure_instruction_is_permitted(Instruction1, State),
     State2 = pass1_process_call(Module, Name, Arity, State1),
     %% If the processed function calls another function in the same module but
     %% we don't extract it, we need to transform this instruction into an
@@ -1517,9 +1537,9 @@ pass1_process_instructions(
            all_calls = AllCalls} = State,
     ?assertEqual(Module, FromModule),
     ShouldProcess = maps:is_key(MFA, AllCalls) andalso maps:is_key(MFA, Calls),
-    Instruction1 = case ShouldProcess of
+    Instruction2 = case ShouldProcess of
                        true ->
-                           Instruction;
+                           Instruction1;
                        false ->
                            InstructionName = case Call of
                                                  call      -> call_ext;
@@ -1528,7 +1548,7 @@ pass1_process_instructions(
                            ExtFunc = {extfunc, Module, Name, Arity},
                            {InstructionName, Arity, ExtFunc}
                    end,
-    pass1_process_instructions(Rest, State2, [Instruction1 | Result]);
+    pass1_process_instructions(Rest, State2, [Instruction2 | Result]);
 pass1_process_instructions(
   [{Call, Arity, {extfunc, Module, Name, Arity}} = Instruction | Rest],
   State,
@@ -1538,13 +1558,26 @@ pass1_process_instructions(
     State2 = pass1_process_call(Module, Name, Arity, State1),
     pass1_process_instructions(Rest, State2, [Instruction | Result]);
 pass1_process_instructions(
-  [{call_last, Arity, {Module, Name, Arity}, _} = Instruction
+  [{call_last, Arity, CalledFunction, _} = Instruction
    | Rest],
   State,
   Result) ->
-    State1 = ensure_instruction_is_permitted(Instruction, State),
+    Instruction1 = case CalledFunction of
+                       {f, Label} ->
+                           %% This variant of the instruction happens when the
+                           %% input is the original assembly (the `.S' file is
+                           %% available).
+                           MFA = label_to_mfa(Label, State),
+                           setelement(3, Instruction, MFA);
+                       {_M, _F, _A} ->
+                           %% This variant of the instruction happens when the
+                           %% input comes from `beam_disasm'.
+                           Instruction
+                    end,
+    {Module, Name, Arity} = element(3, Instruction1),
+    State1 = ensure_instruction_is_permitted(Instruction1, State),
     State2 = pass1_process_call(Module, Name, Arity, State1),
-    pass1_process_instructions(Rest, State2, [Instruction | Result]);
+    pass1_process_instructions(Rest, State2, [Instruction1 | Result]);
 pass1_process_instructions(
   [{call_ext_last, Arity, {extfunc, Module, Name, Arity}, _} = Instruction
    | Rest],
@@ -1574,9 +1607,18 @@ pass1_process_instructions(
               end,
     pass1_process_instructions(Rest, State1, Result1);
 pass1_process_instructions(
+  [{line, Location} = Instruction | Rest],
+  State,
+  Result) when is_list(Location) ->
+    %% This variant of the instruction happens when the input is the original
+    %% assembly (the `.S' file is available).
+    pass1_process_instructions(Rest, State, [Instruction | Result]);
+pass1_process_instructions(
   [{line, Index} = Instruction | Rest],
   #state{lines_in_progress = Lines} = State,
   Result) when is_integer(Index) ->
+    %% This variant of the instruction happens when the input comes from
+    %% `beam_disasm'.
     case maybe_decode_line_instr(Instruction, Lines) of
         {true, Instruction1} ->
             pass1_process_instructions(Rest, State, [Instruction1 | Result]);
@@ -1594,19 +1636,45 @@ pass1_process_instructions(
             pass1_process_instructions(Rest, State, Result)
     end;
 pass1_process_instructions(
-  [{make_fun2, {Module, Name, Arity}, _, _, _} = Instruction | Rest],
+  [{make_fun2, CalledFunction, _, _, _} = Instruction | Rest],
   State,
   Result) ->
-    State1 = ensure_instruction_is_permitted(Instruction, State),
+    Instruction1 = case CalledFunction of
+                       {f, Label} ->
+                           %% This variant of the instruction happens when the
+                           %% input is the original assembly (the `.S' file is
+                           %% available).
+                           MFA = label_to_mfa(Label, State),
+                           setelement(2, Instruction, MFA);
+                       {_M, _F, _A} ->
+                           %% This variant of the instruction happens when the
+                           %% input comes from `beam_disasm'.
+                           Instruction
+                    end,
+    {Module, Name, Arity} = element(2, Instruction1),
+    State1 = ensure_instruction_is_permitted(Instruction1, State),
     State2 = pass1_process_call(Module, Name, Arity, State1),
-    pass1_process_instructions(Rest, State2, [Instruction | Result]);
+    pass1_process_instructions(Rest, State2, [Instruction1 | Result]);
 pass1_process_instructions(
-  [{make_fun3, {Module, Name, Arity}, _, _, _, _} = Instruction | Rest],
+  [{make_fun3, CalledFunction, _, _, _, _} = Instruction | Rest],
   State,
   Result) ->
-    State1 = ensure_instruction_is_permitted(Instruction, State),
+    Instruction1 = case CalledFunction of
+                       {f, Label} ->
+                           %% This variant of the instruction happens when the
+                           %% input is the original assembly (the `.S' file is
+                           %% available).
+                           MFA = label_to_mfa(Label, State),
+                           setelement(2, Instruction, MFA);
+                       {_M, _F, _A} ->
+                           %% This variant of the instruction happens when the
+                           %% input comes from `beam_disasm'.
+                           Instruction
+                    end,
+    {Module, Name, Arity} = element(2, Instruction1),
+    State1 = ensure_instruction_is_permitted(Instruction1, State),
     State2 = pass1_process_call(Module, Name, Arity, State1),
-    pass1_process_instructions(Rest, State2, [Instruction | Result]);
+    pass1_process_instructions(Rest, State2, [Instruction1 | Result]);
 pass1_process_instructions(
   [{move, {literal, Fun}, Reg} = Instruction | Rest],
   State,
@@ -1648,6 +1716,13 @@ pass1_process_instructions(
            end,
     Instruction1 = {move, {literal, Fun1}, Reg},
     pass1_process_instructions(Rest, State3, [Instruction1 | Result]);
+pass1_process_instructions(
+  [{'%', _VarInfo} = Instruction | Rest],
+  State,
+  Result) ->
+    %% This instruction happens when the input is the original assembly (the
+    %% `.S' file is available) only, not when it comes from `beam_disasm'.
+    pass1_process_instructions(Rest, State, [Instruction | Result]);
 
 %% Third group.
 
@@ -1871,11 +1946,8 @@ lookup_function(
     %% functions. Instead, the abstract form of the source code is available
     %% in the lambda's env.
     %%
-    %% There here, we compile the abstract form and extract the assembly from
-    %% the compiled beam. This allows to use the rest of `horus'
-    %% unmodified.
-    %%
-    %% FIXME: Can we compile to assembly form using 'S' instead?
+    %% There here, we compile the abstract form to assembly. This allows to use
+    %% the rest of `horus' unmodified.
     #beam_file_ext{code = Functions} = erl_eval_fun_to_asm(
                                          Module, Name, Arity, Env),
     {find_function(Functions, Module, Name, Arity), State};
@@ -1884,12 +1956,25 @@ lookup_function(Module, Name, Arity, State) ->
                                                    Module, State),
     {find_function(Functions, Module, Name, Arity), State1}.
 
+label_to_mfa(
+  Label,
+  #state{mfa_in_progress = {Module, _Name, _Arity}} = State) ->
+    Function = lookup_function(Module, Label, State),
+    #function{name = Name, arity = Arity} = Function,
+    MFA = {Module, Name, Arity},
+    MFA.
+
+lookup_function(Module, Label, State) ->
+    #beam_file_ext{code = Functions} = get_cached_beam_file_record(
+                                         Module, State),
+    find_function(Functions, Module, Label).
+
 -spec find_function([Function], Module, Name, Arity) -> Function when
       Function :: #function{},
       Module :: module(),
       Name :: atom(),
       Arity :: non_neg_integer() | undefined.
-%% Finds a function in a list of functions by its name and arity
+%% @doc Finds a function in a list of functions by its name and arity.
 
 find_function(
   [#function{name = Name, arity = Arity} = Function | _],
@@ -1909,6 +1994,27 @@ find_function(
     throw(?horus_error(
              call_to_unexported_function,
              #{mfa => {Module, Name, Arity}})).
+
+-spec find_function([Function], Module, Label) -> Function when
+      Function :: #function{},
+      Module :: module(),
+      Label :: non_neg_integer().
+%% @doc Finds a function in a list of functions by its entry label.
+
+find_function(
+  [#function{entry = Label} = Function | _],
+  _Module, Label) when is_integer(Label) ->
+    Function;
+find_function(
+  [_ | Rest],
+  Module, Label) ->
+    find_function(Rest, Module, Label);
+find_function(
+  [],
+  Module, Label) ->
+    throw(?horus_error(
+             call_to_undefined_function,
+             #{entry_label => {Module, Label}})).
 
 -spec erl_eval_fun_to_asm(Module, Name, Arity, Env) -> BeamFileRecord when
       Module :: module(),
@@ -1937,18 +2043,22 @@ erl_eval_fun_to_asm1(Module, Name, Arity, Clauses) ->
              {attribute, Anno, export, [{Name, Arity}]},
              {function, Anno, Name, Arity, Clauses}],
 
-    %% The abstract form is now compiled to binary code. Then, the assembly
-    %% code is extracted from the compiled beam.
+    %% The abstract form is now compiled to assembly. We don't need to
+    %% disassemble anything.
+    %%
+    %% FIXME: The compiler still writes the compiled assembly to `erl_eval.S'
+    %% in the current working directory...
     CompilerOptions = [from_abstr,
+                       'S',
                        binary,
                        return_errors,
                        return_warnings,
                        deterministic],
     case compile:forms(Forms, CompilerOptions) of
-        {ok, Module, Beam, _Warnings} ->
+        {ok, Module, Asm, _Warnings} ->
             %% We can ignore warnings because the lambda was already parsed
             %% and compiled before by `erl_eval' previously.
-            do_disassemble(Beam);
+            asm_to_beam_file_record(Asm);
         Error ->
             ?horus_misuse(
                erl_eval_fun_compilation_failure,
@@ -1962,6 +2072,12 @@ erl_eval_fun_to_asm1(Module, Name, Arity, Clauses) ->
 
 -define(ASM_CACHE_KEY(Module, Checksum),
         {horus, asm_cache, Module, Checksum}).
+
+get_cached_beam_file_record(Module, #state{checksums = Checksums}) ->
+    Checksum = maps:get(Module, Checksums),
+    Key = ?ASM_CACHE_KEY(Module, Checksum),
+    {BeamFileRecordExt, _Props} = persistent_term:get(Key),
+    BeamFileRecordExt.
 
 disassemble_module(Module, #state{checksums = Checksums} = State) ->
     case Checksums of
@@ -2000,7 +2116,7 @@ disassemble_module1(Module, ExpectedChecksum) ->
     ?assert(is_binary(Checksum)),
     Key = ?ASM_CACHE_KEY(Module, Checksum),
     case persistent_term:get(Key, undefined) of
-        {#beam_file_ext{} = BeamFileRecord, CodeFrom} ->
+        {#beam_file_ext{} = BeamFileRecord, #{code_from := CodeFrom}} ->
             {BeamFileRecord, Checksum, CodeFrom};
         undefined ->
             %% This module with this checksum was never disassembled, or is
@@ -2147,9 +2263,127 @@ get_object_code_from_cover(Module, Filename) ->
     end.
 
 do_disassemble_and_cache(Module, Checksum, Beam, CodeFrom) ->
-    BeamFileRecordExt = do_disassemble(Beam),
+    ModBasename = atom_to_list(Module) ++ ".S",
+    AsmFile = code:where_is_file(ModBasename),
+    {BeamFileRecordExt, AsmFrom} = case AsmFile of
+                                       non_existing ->
+                                           BFRE = do_disassemble(Beam),
+                                           {BFRE, beam_disasm};
+                                       _ ->
+                                           {ok, Asm} = file:consult(AsmFile),
+                                           BFRE = asm_to_beam_file_record(Asm),
+                                           {BFRE, AsmFile}
+                                   end,
     Key = ?ASM_CACHE_KEY(Module, Checksum),
-    persistent_term:put(Key, {BeamFileRecordExt, CodeFrom}),
+    Props = #{code_from => CodeFrom,
+              asm_from => AsmFrom},
+    persistent_term:put(Key, {BeamFileRecordExt, Props}),
+    BeamFileRecordExt.
+
+-spec asm_to_beam_file_record(Asm) -> BeamFileRecordExt when
+      Asm :: [any()] |
+             {module(),
+              [{atom(), non_neg_integer()}],
+              [beam_lib:attrib_entry()],
+              [#function{}],
+              non_neg_integer()},
+      BeamFileRecordExt :: #beam_file_ext{}.
+%% @private
+
+asm_to_beam_file_record(Asm) when is_list(Asm) ->
+    BeamFileRecordExt = #beam_file_ext{
+                           module = undefined,
+                           lines = undefined,
+                           strings = undefined,
+                           lambdas = undefined
+                          },
+    asm_to_beam_file_record1(Asm, BeamFileRecordExt);
+asm_to_beam_file_record({Module, Exports, Attributes, Functions, _Labels}) ->
+    LabeledExports = exports_to_labeled_exports(Exports),
+    Attributes1 = annotate_asm_attributes(Attributes),
+    BeamFileRecordExt = #beam_file_ext{
+                           module = Module,
+                           labeled_exports = LabeledExports,
+                           attributes = Attributes1,
+                           code = Functions,
+                           lines = undefined,
+                           strings = undefined,
+                           lambdas = undefined
+                          },
+    BeamFileRecordExt.
+
+asm_to_beam_file_record1(
+  [{module, Module} | Rest],
+  #beam_file_ext{module = undefined} = BeamFileRecordExt) ->
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           module = Module},
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt1);
+asm_to_beam_file_record1(
+  [{exports, Exports} | Rest],
+  BeamFileRecordExt) ->
+    LabeledExports = exports_to_labeled_exports(Exports),
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           labeled_exports = LabeledExports},
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt1);
+asm_to_beam_file_record1(
+  [{attributes, Attributes} | Rest],
+  BeamFileRecordExt) ->
+    Attributes1 = annotate_asm_attributes(Attributes),
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           attributes = Attributes1},
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt1);
+asm_to_beam_file_record1(
+  [{labels, _Labels} | Rest],
+  BeamFileRecordExt) ->
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt);
+asm_to_beam_file_record1(
+  [Function | _] = Functions,
+  BeamFileRecordExt)
+  when is_tuple(Function) andalso element(1, Function) =:= function ->
+    asm_to_beam_file_record2(Functions, undefined, BeamFileRecordExt).
+
+asm_to_beam_file_record2(
+  [{function, FunName, Arity, EntryLabel} | Rest],
+  PreviousFunction,
+  BeamFileRecordExt) ->
+    BeamFileRecordExt1 = add_function(BeamFileRecordExt, PreviousFunction),
+    NewFunction = #function{name = FunName,
+                            arity = Arity,
+                            entry = EntryLabel,
+                            code = []},
+    asm_to_beam_file_record2(Rest, NewFunction, BeamFileRecordExt1);
+asm_to_beam_file_record2(
+  [Instruction | Rest],
+  #function{code = Code} = CurrentFunction,
+  BeamFileRecordExt) ->
+    Code1 = Code ++ [Instruction],
+    CurrentFunction1 = CurrentFunction#function{code = Code1},
+    asm_to_beam_file_record2(Rest, CurrentFunction1, BeamFileRecordExt);
+asm_to_beam_file_record2(
+  [],
+  CurrentFunction,
+  BeamFileRecordExt) ->
+    add_function(BeamFileRecordExt, CurrentFunction).
+
+exports_to_labeled_exports(Exports) ->
+    LabeledExports = [{FunName, Arity, undefined}
+                      || {FunName, Arity} <- Exports],
+    LabeledExports.
+
+annotate_asm_attributes(Attributes) ->
+    Attributes1 = [{from_asm, true} | Attributes],
+    Attributes1.
+
+add_function(
+  #beam_file_ext{code = Code} = BeamFileRecordExt,
+  #function{} = Function) ->
+    Code1 = Code ++ [Function],
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           code = Code1},
+    BeamFileRecordExt1;
+add_function(
+  #beam_file_ext{} = BeamFileRecordExt,
+  undefined) ->
     BeamFileRecordExt.
 
 do_disassemble(Beam) ->
