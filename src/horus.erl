@@ -143,7 +143,7 @@
 -record(line, {name_index,
                location}).
 
-%% The following record is used to stored the decoded "FunT" beam chunk. They
+%% The following record is used to store the decoded "FunT" beam chunk. They
 %% are used while processing instructions such as `call_fun2' to resolve the
 %% label where the call must jump.
 
@@ -181,7 +181,7 @@
                         attributes      = [] :: [beam_lib:attrib_entry()],
                         compile_info    = [] :: [beam_lib:compinfo_entry()],
                         code            = [] :: [#function{}],
-                        %% Added in this module to stored the decoded chunks.
+                        %% Added in this module to store the decoded chunks.
                         lines                :: #lines{} | undefined,
                         strings              :: binary() | undefined,
                         lambdas              :: [#lambda{}] | undefined}).
