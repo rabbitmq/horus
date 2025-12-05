@@ -2052,8 +2052,8 @@ get_object_code_from_cover(Module, Filename) ->
     end.
 
 do_disassemble_and_cache(Module, Checksum, Beam, CodeFrom) ->
-    Key = ?ASM_CACHE_KEY(Module, Checksum),
     BeamFileRecordExt = do_disassemble(Beam),
+    Key = ?ASM_CACHE_KEY(Module, Checksum),
     persistent_term:put(Key, {BeamFileRecordExt, CodeFrom}),
     BeamFileRecordExt.
 
