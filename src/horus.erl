@@ -1920,48 +1920,71 @@ disassemble_module(Module, #state{checksums = Checksums} = State) ->
             {BeamFileRecord, State1}
     end.
 
-disassemble_module1(Module, Checksum) when is_binary(Checksum) ->
+disassemble_module1(Module, ExpectedChecksum) ->
+    Checksum = case ExpectedChecksum of
+                   undefined -> Module:module_info(md5);
+                   _         -> ExpectedChecksum
+               end,
+    ?assert(is_binary(Checksum)),
     Key = ?ASM_CACHE_KEY(Module, Checksum),
     case persistent_term:get(Key, undefined) of
         {#beam_file_ext{} = BeamFileRecord, CodeFrom} ->
             {BeamFileRecord, Checksum, CodeFrom};
         undefined ->
-            {Module, Beam, _, CodeFrom} = get_object_code(Module),
-            {ok, {Module, ActualChecksum}} = beam_lib:md5(Beam),
-            case ActualChecksum of
-                Checksum ->
-                    BeamFileRecord = do_disassemble_and_cache(
-                                       Module, Checksum, Beam, CodeFrom),
-                    {BeamFileRecord, Checksum, CodeFrom};
-                _ ->
-                    CompileInfoFromFun = Module:module_info(compile),
-                    CompileInfoOnDisk = get_and_decode_compile_chunk(
-                                          Module, Beam),
-                    IsAcceptable = is_recompiled_module_acceptable(
-                                     CompileInfoFromFun, CompileInfoOnDisk),
-                    case IsAcceptable of
-                        true ->
-                            BeamFileRecord = do_disassemble_and_cache(
-                                               Module, Checksum, Beam,
-                                               CodeFrom),
-                            {BeamFileRecord, Checksum, CodeFrom};
-                        false ->
-                            ?horus_misuse(
-                               mismatching_module_checksum,
-                               #{module => Module,
-                                 checksum_from_fun => Checksum,
-                                 checksum_on_disk => ActualChecksum,
-                                 compile_info_from_fun => CompileInfoFromFun,
-                                 compile_info_on_disk => CompileInfoOnDisk})
-                    end
+            %% This module with this checksum was never disassembled, or is
+            %% being disassembled concurrently. We acquire a lock and check the
+            %% cache again, before actually get the object code and disassemble
+            %% it. This avoids too contention on the code server when many
+            %% processes want to disassemble the same module at the same time.
+            Lock = {Key, self()},
+            global:set_lock(Lock, [node()]),
+            try
+                case persistent_term:get(Key, undefined) of
+                    {#beam_file_ext{} = BeamFileRecord, CodeFrom} ->
+                        {BeamFileRecord, Checksum, CodeFrom};
+                    undefined ->
+                        disassemble_module2(Module, ExpectedChecksum, Checksum)
+                end
+            after
+                global:del_lock(Lock, [node()])
             end
-    end;
-disassemble_module1(Module, undefined) ->
+    end.
+
+disassemble_module2(Module, ExpectedChecksum, Checksum) ->
     {Module, Beam, _, CodeFrom} = get_object_code(Module),
-    {ok, {Module, Checksum}} = beam_lib:md5(Beam),
-    BeamFileRecord = do_disassemble_and_cache(
-                       Module, Checksum, Beam, CodeFrom),
-    {BeamFileRecord, Checksum, CodeFrom}.
+    {ok, {Module, ActualChecksum}} = beam_lib:md5(Beam),
+    case ExpectedChecksum =:= undefined orelse ActualChecksum =:= Checksum of
+        true ->
+            %% The checksum of the module matches the one we expect, or we
+            %% didn't have a clear idea of what the checksum should be
+            %% (`ExpectedChecksum' is undefined).
+            BeamFileRecord = do_disassemble_and_cache(
+                               Module, Checksum, Beam, CodeFrom),
+            {BeamFileRecord, Checksum, CodeFrom};
+        false ->
+            %% The actual checksum doesn't match the expected one. Let's see if
+            %% this is ok.
+            CompileInfoFromFun = Module:module_info(compile),
+            CompileInfoOnDisk = get_and_decode_compile_chunk(
+                                  Module, Beam),
+            IsAcceptable = is_recompiled_module_acceptable(
+                             CompileInfoFromFun, CompileInfoOnDisk),
+            case IsAcceptable of
+                true ->
+                    BeamFileRecord = do_disassemble_and_cache(
+                                       Module, Checksum, Beam,
+                                       CodeFrom),
+                    {BeamFileRecord, Checksum, CodeFrom};
+                false ->
+                    ?horus_misuse(
+                       mismatching_module_checksum,
+                       #{module => Module,
+                         checksum_from_fun => Checksum,
+                         checksum_on_disk => ActualChecksum,
+                         compile_info_from_fun => CompileInfoFromFun,
+                         compile_info_on_disk => CompileInfoOnDisk})
+            end
+    end.
 
 -spec get_object_code(Module) -> Ret when
       Module :: module(),
