@@ -67,12 +67,15 @@
 -export([to_standalone_fun/1,
          to_standalone_fun/2,
          to_fun/1,
+         uses_lazy_compilation/1,
          exec/2]).
 
 %% For internal use only.
 -export([override_object_code/2,
          forget_overridden_object_code/1,
-         do_get_object_code/1]).
+         do_get_object_code/1,
+         is_standalone_fun_loaded/1,
+         unload_standalone_fun/1]).
 
 -ifdef(TEST).
 -export([standalone_fun_cache_key/5,
@@ -251,7 +254,8 @@ fun((#{calls := #{Call :: mfa() => true},
                      is_standalone_fun_still_needed =>
                      is_standalone_fun_still_needed_fun(),
                      add_module_info => boolean(),
-                     debug_info => boolean()}.
+                     debug_info => boolean(),
+                     lazy_compilation => boolean()}.
 %% Options to tune the extraction of an anonymous function.
 %%
 %% <ul>
@@ -268,6 +272,9 @@ fun((#{calls := #{Call :: mfa() => true},
 %% (about 140 bytes). Default is true.</li>
 %% <li>`debug_info': a boolean to indicate if details should be added to the
 %% `#horus_fun.debug_info' field. See {@link debug_info()}.</li>
+%% <li>`lazy_compilation': a boolean to indicate if the generated module is
+%% compiled at extraction time (`false', the default) or at execution time
+%% (`true').</li>
 %% </ul>
 
 -type debug_info() :: #{fun_info := fun_info(),
@@ -503,7 +510,15 @@ to_standalone_fun3(
                     LiteralFuns = maps:values(LiteralFuns0),
 
                     {ok, Asm, FunNameMapping} = pass2(State4),
-                    {GeneratedModuleName, Beam} = compile(Asm),
+
+                    {GeneratedModuleName, AsmOrBeam} = (
+                                            case Options of
+                                                #{lazy_compilation := true} ->
+                                                    GMN = element(1, Asm),
+                                                    {GMN, Asm};
+                                                _ ->
+                                                    compile(Asm)
+                                            end),
 
                     DebugInfo = case maps:get(debug_info, Options, false) of
                                     false ->
@@ -516,7 +531,7 @@ to_standalone_fun3(
                                 end,
                     StandaloneFun = #horus_fun{
                                        module = GeneratedModuleName,
-                                       beam = Beam,
+                                       beam = AsmOrBeam,
                                        arity = Arity,
                                        literal_funs = LiteralFuns,
                                        fun_name_mapping = FunNameMapping,
@@ -757,6 +772,23 @@ extract_module_info_functions(State) ->
 
 should_generate_module_info_functions(#state{options = Options}) ->
     maps:get(add_module_info, Options, true).
+
+-spec uses_lazy_compilation(StandaloneFun) -> UsesLazyCompilation when
+      StandaloneFun :: horus_fun(),
+      UsesLazyCompilation :: boolean().
+%% @doc Returns if the given standalone function uses lazy compilation.
+%%
+%% @param StandaloneFun the extracted function as returnet by {@link
+%% to_standalone/2}.
+%%
+%% @returns the fact the standalone function uses lazy compilation or not.
+
+uses_lazy_compilation(#horus_fun{beam = Beam}) when is_binary(Beam) ->
+    false;
+uses_lazy_compilation(#horus_fun{beam = Asm}) when is_tuple(Asm) ->
+    true;
+uses_lazy_compilation(Fun) when is_function(Fun) ->
+    false.
 
 -spec compile(Asm) -> {Module, Beam} when
       Asm :: asm(), %% FIXME: compile:forms/2 is incorrectly specified.
@@ -1041,7 +1073,7 @@ exec(Fun, Args) ->
 %% @private
 
 load_standalone_fun(
-  #horus_fun{module = Module, beam = Beam} = StandaloneFun) ->
+  #horus_fun{module = Module, beam = AsmOrBeam} = StandaloneFun) ->
     case horus_utils:is_module_loaded(Module) of
         true ->
             ok;
@@ -1053,6 +1085,13 @@ load_standalone_fun(
                     global:del_lock(Lock, [node()]),
                     ok;
                 false ->
+                    Beam = if
+                               is_tuple(AsmOrBeam) ->
+                                   {Module, Beam0} = compile(AsmOrBeam),
+                                   Beam0;
+                               is_binary(AsmOrBeam) ->
+                                   AsmOrBeam
+                           end,
                     Ret = code:load_binary(Module, ?MODULE_STRING, Beam),
                     global:del_lock(Lock, [node()]),
                     case Ret of
@@ -1066,6 +1105,39 @@ load_standalone_fun(
                     end
             end
     end.
+
+-spec is_standalone_fun_loaded(StandaloneFun) -> IsLoaded when
+      StandaloneFun :: horus_fun(),
+      IsLoaded :: boolean().
+%% @doc Indicates in the module behind the given standalone function is already
+%% loaded or not.
+%%
+%% @private
+
+is_standalone_fun_loaded(#horus_fun{module = Module}) ->
+    horus_utils:is_module_loaded(Module);
+is_standalone_fun_loaded(Function) when is_function(Function) ->
+    false.
+
+-spec unload_standalone_fun(StandaloneFun) -> ok when
+      StandaloneFun :: horus_fun().
+%% @doc Unloads the given standalone function underlying module.
+%%
+%% @private
+
+unload_standalone_fun(#horus_fun{module = Module}) ->
+    Lock = {{horus, load, Module}, self()},
+    global:set_lock(Lock, [node()]),
+    try
+        _ = code:delete(Module),
+        _ = code:purge(Module),
+        ?assertNot(horus_utils:is_module_loaded(Module)),
+        ok
+    after
+        global:del_lock(Lock, [node()])
+    end;
+unload_standalone_fun(Function) when is_function(Function) ->
+    ok.
 
 -spec to_fun(StandaloneFun) -> Fun when
       StandaloneFun :: horus_fun(),
