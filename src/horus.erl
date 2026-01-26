@@ -2263,17 +2263,23 @@ get_object_code_from_cover(Module, Filename) ->
     end.
 
 do_disassemble_and_cache(Module, Checksum, Beam, CodeFrom) ->
-    ModBasename = atom_to_list(Module) ++ ".S",
-    AsmFile = code:where_is_file(ModBasename),
-    {BeamFileRecordExt, AsmFrom} = case AsmFile of
-                                       non_existing ->
-                                           BFRE = do_disassemble(Beam),
-                                           {BFRE, beam_disasm};
-                                       _ ->
-                                           {ok, Asm} = file:consult(AsmFile),
-                                           BFRE = asm_to_beam_file_record(Asm),
-                                           {BFRE, AsmFile}
-                                   end,
+    Ret = beam_lib:chunks(Beam, [abstract_code]),
+    case Ret of
+        {ok, {Module, [{abstract_code, {raw_abstract_v1, Code}}]}}
+          when is_list(Code) andalso Code =/= [] ->
+            CompilerOptions = ['S', deterministic],
+            {ok, Module, Asm} = compile:forms(Code, CompilerOptions),
+            BeamFileRecordExt = asm_to_beam_file_record(Asm),
+            do_disassemble_and_cache1(
+              Module, Checksum, BeamFileRecordExt, CodeFrom, abstract_code);
+        _ ->
+            BeamFileRecordExt = do_disassemble(Beam),
+            do_disassemble_and_cache1(
+              Module, Checksum, BeamFileRecordExt, CodeFrom, beam_disasm)
+    end.
+
+do_disassemble_and_cache1(
+  Module, Checksum, BeamFileRecordExt, CodeFrom, AsmFrom) ->
     Key = ?ASM_CACHE_KEY(Module, Checksum),
     Props = #{code_from => CodeFrom,
               asm_from => AsmFrom},
