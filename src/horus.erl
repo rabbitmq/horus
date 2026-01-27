@@ -309,6 +309,8 @@ fun((#{calls := #{Call :: mfa() => true},
                 calls = #{} :: #{mfa() => true},
                 all_calls = #{} :: all_calls_map(),
                 functions = #{} :: #{mfa() => #function{}},
+                functions1 = #{} :: #{mfa() => term()},
+                records = #{} :: #{module() => list()},
 
                 lines_in_progress :: #lines{} | undefined,
                 strings_in_progress :: binary() | undefined,
@@ -402,6 +404,7 @@ to_standalone_fun(Fun, Options) ->
 
 to_standalone_fun1(Fun, Options) ->
     Info = maps:from_list(erlang:fun_info(Fun)),
+    logger:alert("INFO = ~p", [Info]),
     #{module := Module,
       name := Name,
       arity := Arity} = Info,
@@ -517,6 +520,7 @@ to_standalone_fun3(
                     LiteralFuns = maps:values(LiteralFuns0),
 
                     {ok, Asm, FunNameMapping} = pass2(State4),
+                    logger:alert("ENV =~n~p", [Env]),
 
                     {GeneratedModuleName, AsmOrBeam} = (
                                             case Options of
@@ -772,6 +776,7 @@ extract_module_info_functions(State) ->
             State2 = pass1_process_function(
                        ?MOD_FOR_MODULE_INFO_FUN, module_info, 1, State1),
             State#state{functions = State2#state.functions,
+                        functions1 = State2#state.functions1,
                         next_label = State2#state.next_label};
         false ->
             State
@@ -802,7 +807,7 @@ uses_lazy_compilation(Fun) when is_function(Fun) ->
       Module :: module(),
       Beam :: binary().
 
-compile(Asm) ->
+compile(Asm) when is_tuple(Asm) ->
     CompilerOptions = [from_asm,
                        binary,
                        warnings_as_errors,
@@ -812,6 +817,16 @@ compile(Asm) ->
     case compile:forms(Asm, CompilerOptions) of
         {ok, Module, Beam, []} -> {Module, Beam};
         Error                  -> handle_compilation_error(Asm, Error)
+    end;
+compile(AbstractCode) when is_list(AbstractCode) ->
+    CompilerOptions = [binary,
+                       warnings_as_errors,
+                       return_errors,
+                       return_warnings,
+                       deterministic],
+    case compile:forms(AbstractCode, CompilerOptions) of
+        {ok, Module, Beam, []} -> {Module, Beam};
+        Error                  -> handle_compilation_error(AbstractCode, Error)
     end.
 
 handle_compilation_error(
@@ -1252,11 +1267,27 @@ pass1_process_function(Module, Name, Arity, State) ->
     Functions1 = Functions#{MFA  => Function1},
     State4 = State3#state{functions = Functions1},
 
+    State5 = case {Module, Name} of
+                 {?MOD_FOR_MODULE_INFO_FUN, module_info} ->
+                     State4;
+                 _ ->
+                     FunctionAC = lookup_function1(Module, Name, Arity, State4),
+                     % case Name of
+                     %     module_info ->
+                     %         ok;
+                     %     _ ->
+                     %         logger:alert("~s:~s:~b:~n  (asm) =~n    ~p~n  (code) =~n    ~p", [Module, Name, Arity, Function1, FunctionAC])
+                     % end,
+                     #state{functions1 = FunctionsAC} = State4,
+                     FunctionsAC1 = FunctionsAC#{MFA => FunctionAC},
+                     State4#state{functions1 = FunctionsAC1}
+             end,
+
     %% Recurse with called functions.
     maps:fold(
       fun({M, F, A}, true, St) ->
               pass1_process_function(M, F, A, St)
-      end, State4, Calls).
+      end, State5, Calls).
 
 -spec pass1_process_function_code(Function, State) -> {Function, State} when
       Function :: #function{},
@@ -1969,6 +2000,115 @@ lookup_function(Module, Label, State) ->
                                          Module, State),
     find_function(Functions, Module, Label).
 
+lookup_function1(Module, Name, Arity, State) ->
+    AbstractCode = get_cached_abstract_code(Module, State),
+    case AbstractCode of
+        undefined ->
+            undefined;
+        _ ->
+            lookup_function1(AbstractCode, Module, Name, Arity, State)
+    end.
+
+lookup_function1([{function, _Location, Name, Arity, Body} | _Rest], _Module, Name, Arity, _State) ->
+    Body;
+lookup_function1([{function, _Location, OtherName, OtherArity, Body} | Rest], Module, Name, Arity, State) ->
+    OtherNameAndArity = lists:flatten(io_lib:format("~s/~b", [OtherName, OtherArity])),
+    NameS = atom_to_list(Name),
+    case string:split(NameS, "-", all) of
+        ["", OtherNameAndArity, "fun", IndexS, ""] ->
+            Index = list_to_integer(IndexS),
+            Clauses = lookup_fun(Body, 0, Index, Module, State),
+            Clauses;
+        _ ->
+            lookup_function1(Rest, Module, Name, Arity, State)
+    end;
+lookup_function1([_ | Rest], Module, Name, Arity, State) ->
+    lookup_function1(Rest, Module, Name, Arity, State);
+lookup_function1([], _, _, _, _) ->
+    undefined.
+
+lookup_fun([{'fun', _Location, {clauses, Clauses}} | Rest], NextIndex, WantedIndex, Module, State) ->
+    Ret = lookup_fun(Clauses, NextIndex, WantedIndex, Module, State),
+    case Ret of
+        InnerFunClauses when is_list(InnerFunClauses) ->
+            InnerFunClauses;
+        WantedIndex ->
+            Clauses1 = add_args_from_env(Clauses, Module, State),
+            Clauses1;
+        NextIndex1 ->
+            NextIndex2 = NextIndex1 + 1,
+            lookup_fun(Rest, NextIndex2, WantedIndex, Module, State)
+    end;
+lookup_fun([Tuple | Rest], NextIndex, WantedIndex, Module, State) when is_tuple(Tuple) ->
+    List = tuple_to_list(Tuple),
+    lookup_fun(List ++ Rest, NextIndex, WantedIndex, Module, State);
+lookup_fun([List | Rest], NextIndex, WantedIndex, Module, State) when is_list(List) ->
+    lookup_fun(List ++ Rest, NextIndex, WantedIndex, Module, State);
+lookup_fun([_Term | Rest], NextIndex, WantedIndex, Module, State) ->
+    lookup_fun(Rest, NextIndex, WantedIndex, Module, State);
+lookup_fun([], NextIndex, _WantedIndex, _Module, _State) ->
+    NextIndex.
+
+add_args_from_env([{clause, _Location, Args, _Guards, _Body} | _] = Clauses, Module, State) ->
+    Arity = length(Args),
+    Records = get_records_from_module(Module, State),
+    Code = ([{attribute, {1, 1}, module, foo},
+             {attribute, {2, 1}, export, [{foo, Arity}]}] ++
+            Records ++
+            [{function, {3, 1}, foo, Arity, Clauses}]),
+    Options = [warnings_as_errors,
+               return_errors,
+               return_warnings,
+               deterministic,
+               no_spawn_compiler_process],
+    case compile:forms(Code, Options) of
+        {ok, _Module, _Beam, []} ->
+            Clauses;
+        {error, [{[], Errors}], []} ->
+            logger:alert("ERRORS = ~p", [Errors]),
+            Clauses1 = add_args_to_clauses(Errors, Clauses),
+            Clauses1
+    end.
+
+add_args_to_clauses([{Location, erl_lint, {unbound_var, VarName}} | Rest], Clauses) ->
+    Clauses1 = add_args_to_clauses1(Clauses, Location, VarName, []),
+    add_args_to_clauses(Rest, Clauses1);
+add_args_to_clauses([_Error | Rest], Clauses) ->
+    add_args_to_clauses(Rest, Clauses);
+add_args_to_clauses([], Clauses) ->
+    Clauses.
+
+add_args_to_clauses1(
+  [{clause, {L1, C1} = Location, Args, Guards, Body},
+   {clause, {L2, C2}, _Args, _Guards, _Body} = Next | Rest],
+  {L, C},
+  VarName,
+  Result)
+  when (L1 < L orelse (L1 =:= L andalso C1 < C)) andalso
+       (L < L2 orelse (L =:= L2 andalso C < C2)) ->
+    Var = {var, Location, VarName},
+    Args1 = Args ++ [Var],
+    Clause = {clause, Location, Args1, Guards, Body},
+    lists:reverse(Result) ++ [Clause, Next | Rest];
+add_args_to_clauses1(
+  [{clause, {L1, C1} = Location, Args, Guards, Body}],
+  {L, C},
+  VarName,
+  Result)
+  when L1 < L orelse (L1 =:= L andalso C1 < C) ->
+    Var = {var, Location, VarName},
+    Args1 = Args ++ [Var],
+    Clause = {clause, Location, Args1, Guards, Body},
+    lists:reverse(Result) ++ [Clause];
+add_args_to_clauses1(
+  [Clause | Rest],
+  Location,
+  VarName,
+  Result) ->
+    logger:alert("Var ~p @ ~0p~nClause ~p", [VarName, Location, Clause]),
+    Result1 = [Clause | Result],
+    add_args_to_clauses1(Rest, Location, VarName, Result1).
+
 -spec find_function([Function], Module, Name, Arity) -> Function when
       Function :: #function{},
       Module :: module(),
@@ -2077,7 +2217,25 @@ get_cached_beam_file_record(Module, #state{checksums = Checksums}) ->
     Checksum = maps:get(Module, Checksums),
     Key = ?ASM_CACHE_KEY(Module, Checksum),
     {BeamFileRecordExt, _Props} = persistent_term:get(Key),
+    % logger:alert("BeamFileRecordExt =~n~p", [BeamFileRecordExt]),
     BeamFileRecordExt.
+
+get_cached_abstract_code(Module, #state{checksums = Checksums}) ->
+    Checksum = maps:get(Module, Checksums),
+    Key = ?ASM_CACHE_KEY(Module, Checksum),
+    {_BeamFileRecordExt, Props} = persistent_term:get(Key),
+    case Props of
+        #{asm_from := {abstract_code, AbstractCode}} ->
+            % logger:alert("Abstract code from ~s:~n~p", [Module, AbstractCode]),
+            AbstractCode;
+        _ ->
+            undefined
+    end.
+
+get_records_from_module(Module, State) ->
+    Code = get_cached_abstract_code(Module, State),
+    Attrs = [Attr || {attribute, _Location, record, _Record} = Attr <- Code],
+    Attrs.
 
 disassemble_module(Module, #state{checksums = Checksums} = State) ->
     case Checksums of
@@ -2267,11 +2425,13 @@ do_disassemble_and_cache(Module, Checksum, Beam, CodeFrom) ->
     case Ret of
         {ok, {Module, [{abstract_code, {raw_abstract_v1, Code}}]}}
           when is_list(Code) andalso Code =/= [] ->
+            logger:alert("AbstractCode =~n~p", [Code]),
             CompilerOptions = ['S', deterministic],
             {ok, Module, Asm} = compile:forms(Code, CompilerOptions),
             BeamFileRecordExt = asm_to_beam_file_record(Asm),
             do_disassemble_and_cache1(
-              Module, Checksum, BeamFileRecordExt, CodeFrom, abstract_code);
+              Module, Checksum, BeamFileRecordExt, CodeFrom,
+              {abstract_code, Code});
         _ ->
             BeamFileRecordExt = do_disassemble(Beam),
             do_disassemble_and_cache1(
@@ -2931,6 +3091,7 @@ process_errors(#state{errors = [Error | _]}) ->
 
 pass2(
   #state{functions = Functions0,
+         functions1 = FunctionsAC0,
          next_label = NextLabel} = State) ->
     %% The module name is based on a hash of its entire code.
     GeneratedModuleName = gen_module_name(State),
@@ -2957,12 +3118,17 @@ pass2(
 
     FunNameMapping = extracted_to_initial_fun_name_mapping(Functions1),
 
+    %% Abstract code.
+    AbstractCode = pass2_process_functions1(FunctionsAC0, State1),
+
     Asm = {GeneratedModuleName,
            Exports,
            Attributes,
            Functions2,
            Labels},
-    {ok, Asm, FunNameMapping}.
+    logger:alert("Assembly =~n~p~nAbstractCode =~n~p", [Asm, AbstractCode]),
+    % {ok, Asm, FunNameMapping}.
+    {ok, AbstractCode, FunNameMapping}.
 
 -spec pass2_process_functions(Functions, State) -> Functions when
       Functions :: #{mfa() => #function{}},
@@ -3194,6 +3360,116 @@ replace_label(
             %% use `{f,0}' to signify that the instruction can't/must not fail.
             setelement(Pos, Instruction, {f, 0})
     end.
+
+pass2_process_functions1(
+  FunctionsAC,
+  #state{generated_module_name = GeneratedModuleName,
+         entrypoint = {EntryModule, _, _}} = State) ->
+    FunNameMapping = maps:map(
+                       fun({Module, Name, Arity}, _) ->
+                               gen_function_name(Module, Name, Arity, State)
+                       end, FunctionsAC),
+    FunctionsAC1 = maps:map(
+                     fun(MFA, FunctionAC) ->
+                             pass2_process_function1(MFA, FunctionAC, FunNameMapping, State)
+                     end, FunctionsAC),
+    MFAs = lists:sort(
+             fun
+                 ({M1, _, _}, {M2, _, _}) when M1 =:= EntryModule andalso M2 =/= EntryModule ->
+                     true;
+                 ({M1, _, _}, {M2, _, _}) when M1 =/= EntryModule andalso M2 =:= EntryModule ->
+                     false;
+                 ({M1, F1, A1}, {M2, F2, A2}) ->
+                     M1 < M2 orelse
+                     (M1 =:= M2 andalso F1 < F2) orelse
+                     (M1 =:= M2 andalso F1 =:= F2 orelse A1 < A2)
+             end, maps:keys(FunctionsAC1)),
+    [{_, _, ExportedArity} | _] = MFAs,
+    Exports = [{?SF_ENTRYPOINT, ExportedArity}],
+    {_, Records} = lists:foldl(
+                     fun({M, _, _}, {Ms, Rs} = Ret) ->
+                             case Ms of
+                                 #{M := _} ->
+                                     Ret;
+                                 _ ->
+                                     Code = get_cached_abstract_code(M, State),
+                                     Attrs = [Attr || {attribute, _Location, record, _Record} = Attr <- Code],
+                                     Ms1 = Ms#{M => ok},
+                                     Rs1 = Rs ++ Attrs,
+                                     {Ms1, Rs1}
+                             end
+                     end, {#{}, []}, MFAs),
+    ReversedCode = (lists:reverse(Records) ++
+                    [{attribute, {2, 1}, export, Exports},
+                     {attribute, {1, 1}, module, GeneratedModuleName}]),
+    pass2_process_functions2(MFAs, FunNameMapping, FunctionsAC1, State, ReversedCode).
+
+pass2_process_functions2([MFA | Rest], FunNameMapping, FunctionsAC, State, Result) ->
+    Name = maps:get(MFA, FunNameMapping),
+    Clauses = maps:get(MFA, FunctionsAC),
+    [{clause, Location, _Args, _Guards, _Body} | _] = Clauses,
+    {_, _, Arity} = MFA,
+    Function = {function, Location, Name, Arity, Clauses},
+    Result1 = [Function | Result],
+    pass2_process_functions2(Rest, FunNameMapping, FunctionsAC, State, Result1);
+pass2_process_functions2([], _, _, _, Result) ->
+    lists:reverse(Result).
+
+pass2_process_function1(
+  MFA,
+  Clauses,
+  FunNameMapping,
+  State) ->
+    pass2_process_clauses(Clauses, MFA, FunNameMapping, State, []).
+
+pass2_process_clauses(
+  [{call, _Location, Call, Args} = Statement | Rest],
+  {Module, _Name, _Arity} = MFA,
+  FunNameMapping,
+  State,
+  Result) ->
+    Call1 = case Call of
+                {atom, Location, Name} ->
+                    CallArity = length(Args),
+                    GeneratedName = maps:get({Module, Name, CallArity}, FunNameMapping),
+                    {atom, Location, GeneratedName};
+                {remote, Location, {atom, _ModLoc, ModAtom}, {atom, _NameLoc, NameAtom}} ->
+                    CallArity = length(Args),
+                    case FunNameMapping of
+                        #{{ModAtom, NameAtom, CallArity} := GeneratedName} ->
+                            {atom, Location, GeneratedName};
+                        _ ->
+                            Call
+                    end;
+                {var, _Loc, _VarName} ->
+                    Call
+            end,
+    Statement1 = setelement(3, Statement, Call1),
+    Result1 = [Statement1 | Result],
+    pass2_process_clauses(Rest, MFA, FunNameMapping, State, Result1);
+pass2_process_clauses(
+  [Tuple | Rest],
+  MFA, FunNameMapping, State, Result) when is_tuple(Tuple) ->
+    List = tuple_to_list(Tuple),
+    List1 = pass2_process_clauses(List, MFA, FunNameMapping, State, []),
+    Tuple1 = list_to_tuple(List1),
+    Result1 = [Tuple1 | Result],
+    pass2_process_clauses(Rest, MFA, FunNameMapping, State, Result1);
+pass2_process_clauses(
+  [List | Rest],
+  MFA, FunNameMapping, State, Result) when is_list(List) ->
+    List1 = pass2_process_clauses(List, MFA, FunNameMapping, State, []),
+    Result1 = [List1 | Result],
+    pass2_process_clauses(Rest, MFA, FunNameMapping, State, Result1);
+pass2_process_clauses(
+  [Term | Rest],
+  MFA, FunNameMapping, State, Result) ->
+    Result1 = [Term | Result],
+    pass2_process_clauses(Rest, MFA, FunNameMapping, State, Result1);
+pass2_process_clauses(
+  [],
+  _MFA, _FunNameMapping, _State, Result) ->
+    lists:reverse(Result).
 
 -spec gen_module_name(State) -> Module when
       State :: #state{},
