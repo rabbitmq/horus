@@ -416,7 +416,8 @@ to_standalone_fun1(Fun, Options) ->
 to_standalone_fun2(Fun, State) ->
     case to_cached_standalone_fun(Fun, State) of
         undefined ->
-            Lock = {{horus, Fun}, self()},
+            Key = standalone_fun_cache_key(State),
+            Lock = {Key, self()},
             global:set_lock(Lock, [node()]),
             try
                 case to_cached_standalone_fun(Fun, State) of
