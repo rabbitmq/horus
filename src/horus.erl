@@ -80,6 +80,7 @@
 -export([standalone_fun_cache_key/5,
          get_object_code/1,
          decode_line_chunk/2,
+         file_asm_to_compiler_asm/1,
          compile/1,
          to_actual_arg/1]).
 -endif.
@@ -2136,6 +2137,148 @@ do_disassemble(Beam) ->
                            strings = Strings,
                            lambdas = Lambdas},
     BeamFileRecordExt.
+
+-ifdef(TEST).
+-spec asm_to_beam_file_record(Asm) -> BeamFileRecordExt when
+      Asm :: [any()] | asm(),
+      BeamFileRecordExt :: #beam_file_ext{}.
+%% @private
+
+asm_to_beam_file_record(Asm) when is_list(Asm) ->
+    BeamFileRecordExt = #beam_file_ext{
+                           module = undefined,
+                           lines = undefined,
+                           strings = undefined,
+                           lambdas = undefined
+                          },
+    asm_to_beam_file_record1(Asm, BeamFileRecordExt).
+%% The following clause will be useful if we work with the assembly produced by
+%% the compiler, as opposed to the assembly from `beam_disasm'.
+% asm_to_beam_file_record({Module, Exports, Attributes, Functions, _Labels}) ->
+%     LabeledExports = exports_to_labeled_exports(Exports),
+%     Attributes1 = annotate_asm_attributes(Attributes),
+%     BeamFileRecordExt = #beam_file_ext{
+%                            module = Module,
+%                            labeled_exports = LabeledExports,
+%                            attributes = Attributes1,
+%                            code = Functions,
+%                            lines = undefined,
+%                            strings = undefined,
+%                            lambdas = undefined
+%                           },
+%     BeamFileRecordExt.
+
+asm_to_beam_file_record1(
+  [{module, Module} | Rest],
+  #beam_file_ext{module = undefined} = BeamFileRecordExt) ->
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           module = Module},
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt1);
+asm_to_beam_file_record1(
+  [{exports, Exports} | Rest],
+  BeamFileRecordExt) ->
+    LabeledExports = exports_to_labeled_exports(Exports),
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           labeled_exports = LabeledExports},
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt1);
+asm_to_beam_file_record1(
+  [{attributes, Attributes} | Rest],
+  BeamFileRecordExt) ->
+    Attributes1 = annotate_asm_attributes(Attributes),
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           attributes = Attributes1},
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt1);
+asm_to_beam_file_record1(
+  [{labels, _Labels} | Rest],
+  BeamFileRecordExt) ->
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt);
+asm_to_beam_file_record1(
+  [Function | _] = Functions,
+  BeamFileRecordExt)
+  when is_tuple(Function) andalso element(1, Function) =:= function ->
+    asm_to_beam_file_record2(Functions, undefined, BeamFileRecordExt).
+
+asm_to_beam_file_record2(
+  [{function, FunName, Arity, EntryLabel} | Rest],
+  PreviousFunction,
+  BeamFileRecordExt) ->
+    BeamFileRecordExt1 = add_function(BeamFileRecordExt, PreviousFunction),
+    NewFunction = #function{name = FunName,
+                            arity = Arity,
+                            entry = EntryLabel,
+                            code = []},
+    asm_to_beam_file_record2(Rest, NewFunction, BeamFileRecordExt1);
+asm_to_beam_file_record2(
+  [Instruction | Rest],
+  #function{code = Code} = CurrentFunction,
+  BeamFileRecordExt) ->
+    Code1 = Code ++ [Instruction],
+    CurrentFunction1 = CurrentFunction#function{code = Code1},
+    asm_to_beam_file_record2(Rest, CurrentFunction1, BeamFileRecordExt);
+asm_to_beam_file_record2(
+  [],
+  CurrentFunction,
+  BeamFileRecordExt) ->
+    add_function(BeamFileRecordExt, CurrentFunction).
+
+exports_to_labeled_exports(Exports) ->
+    LabeledExports = [{FunName, Arity, -1}
+                      || {FunName, Arity} <- Exports],
+    LabeledExports.
+
+annotate_asm_attributes(Attributes) ->
+    Attributes1 = [{from_asm, true} | Attributes],
+    Attributes1.
+
+add_function(
+  #beam_file_ext{labeled_exports = LabeledExports,
+                 code = Code} = BeamFileRecordExt,
+  #function{name = FunName,
+            arity = Arity,
+            entry = Label} = Function) ->
+    LabeledExports1 = lists:map(
+                        fun
+                            ({FunName1, Arity1, _})
+                              when FunName1 =:= FunName andalso
+                                   Arity1 =:= Arity ->
+                                {FunName, Arity, Label};
+                            (Entry) ->
+                                Entry
+                        end, LabeledExports),
+    Code1 = Code ++ [Function],
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           labeled_exports = LabeledExports1,
+                           code = Code1},
+    BeamFileRecordExt1;
+add_function(
+  #beam_file_ext{} = BeamFileRecordExt,
+  undefined) ->
+    BeamFileRecordExt.
+
+-spec file_asm_to_compiler_asm(FileAsm) -> CompilerAsm when
+      FileAsm :: [any()] | asm(),
+      CompilerAsm :: asm().
+
+file_asm_to_compiler_asm(FileAsm) ->
+    BeamFileRecordExt = asm_to_beam_file_record(FileAsm),
+    #beam_file_ext{module = Module,
+                   labeled_exports = LabeledExports,
+                   code = Functions} = BeamFileRecordExt,
+    Exports = [{FunName, Arity} || {FunName, Arity, _} <- LabeledExports],
+    Attributes = [],
+    #function{code = Code} = lists:last(Functions),
+    LastLabel = lists:foldl(
+                  fun
+                      ({label, Label}, _Acc) -> Label;
+                      (_, Acc)               -> Acc
+                  end, 0, Code),
+    Labels = LastLabel + 1,
+    {Module,
+     Exports,
+     Attributes,
+     Functions,
+     Labels}.
+-endif.
 
 %% The "Line" beam chunk decoding is based on the equivalent C code in ERTS.
 %% See: erts/emulator/beam/beam_file.c, parse_line_chunk().
