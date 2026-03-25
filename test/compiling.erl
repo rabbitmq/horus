@@ -53,3 +53,31 @@ can_compile_asm_test() ->
     ?assertError(
        ?horus_exception(compilation_failure, #{}),
        horus:compile({})).
+
+can_compile_abtract_code_test() ->
+    Mod = arbitrary_mod,
+    {Mod, Beam, _Filename} = code:get_object_code(Mod),
+    {ok,
+     {Mod, [{abstract_code, {raw_abstract_v1, Code}}]}} = beam_lib:chunks(
+                                                            Beam,
+                                                            [abstract_code]),
+    ?assertMatch(_ when is_list(Code), Code),
+
+    Fun = fun Mod:run/0,
+    StandaloneFun0 = horus:to_standalone_fun(Fun),
+    StandaloneFun1 = StandaloneFun0#horus_fun{module = Mod,
+                                              beam = Code},
+
+    _ = code:delete(Mod),
+    _ = code:purge(Mod),
+    ?assertNot(horus_utils:is_module_loaded(Mod)),
+    ?assertNot(horus:is_standalone_fun_loaded(StandaloneFun1)),
+    try
+        ?assertMatch(yay, horus:exec(StandaloneFun1, []))
+    after
+        horus:unload_standalone_fun(StandaloneFun1)
+    end,
+
+    ?assertError(
+       ?horus_exception(compilation_failure, #{}),
+       horus:compile([])).

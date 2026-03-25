@@ -766,7 +766,7 @@ should_generate_module_info_functions(#state{options = Options}) ->
       Asm :: asm(), %% FIXME: compile:forms/2 is incorrectly specified.
       Beam :: binary().
 
-compile(Asm) ->
+compile(Asm) when is_tuple(Asm) ->
     CompilerOptions = [from_asm,
                        binary,
                        warnings_as_errors,
@@ -776,6 +776,16 @@ compile(Asm) ->
     case compile:forms(Asm, CompilerOptions) of
         {ok, _Module, Beam, []} -> Beam;
         Error                   -> handle_compilation_error(Asm, Error)
+    end;
+compile(AbstractCode) when is_list(AbstractCode) ->
+    CompilerOptions = [binary,
+                       warnings_as_errors,
+                       return_errors,
+                       return_warnings,
+                       deterministic],
+    case compile:forms(AbstractCode, CompilerOptions) of
+        {ok, _Module, Beam, []} -> Beam;
+        Error                   -> handle_compilation_error(AbstractCode, Error)
     end.
 
 handle_compilation_error(
@@ -1056,7 +1066,18 @@ load_standalone_fun(
                     global:del_lock(Lock, [node()]),
                     ok;
                 false ->
-                    Ret = code:load_binary(Module, ?MODULE_STRING, Beam),
+                    Beam1 = if
+                                is_binary(Beam) ->
+                                    %% The module is already compiled as a
+                                    %% beam, we can use it directly.
+                                    Beam;
+                                true ->
+                                    %% The module is not yet compiled to beam:
+                                    %% `Beam' could be source code or assembly.
+                                    %% In any case, we need to compile it.
+                                    compile(Beam)
+                            end,
+                    Ret = code:load_binary(Module, ?MODULE_STRING, Beam1),
                     global:del_lock(Lock, [node()]),
                     case Ret of
                         {module, _} ->

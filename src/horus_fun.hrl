@@ -15,7 +15,9 @@
 %% IMPORTANT: When adding or removing fields to this record, be sure to update
 %% `include/horus.hrl'!
 -record(horus_fun, {module :: module(),
-                    beam :: binary(),
+                    %% `beam' can be a binary (compiled beam) or a list/tuple
+                    %% (source code or assembly that needs to be compiled).
+                    beam :: binary() | list() | tuple(),
                     arity :: arity(),
                     literal_funs :: [horus:horus_fun()],
                     fun_name_mapping :: horus:fun_name_mapping(),
