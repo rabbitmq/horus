@@ -503,8 +503,8 @@ to_standalone_fun3(
                     #state{literal_funs = LiteralFuns0} = State4,
                     LiteralFuns = maps:values(LiteralFuns0),
 
-                    {ok, Asm, FunNameMapping} = pass2(State4),
-                    {GeneratedModuleName, Beam} = compile(Asm),
+                    {ok, GeneratedModuleName, Asm, FunNameMapping} = pass2(State4),
+                    Beam = compile(Asm),
 
                     DebugInfo = case maps:get(debug_info, Options, false) of
                                     false ->
@@ -759,9 +759,8 @@ extract_module_info_functions(State) ->
 should_generate_module_info_functions(#state{options = Options}) ->
     maps:get(add_module_info, Options, true).
 
--spec compile(Asm) -> {Module, Beam} when
+-spec compile(Asm) -> Beam when
       Asm :: asm(), %% FIXME: compile:forms/2 is incorrectly specified.
-      Module :: module(),
       Beam :: binary().
 
 compile(Asm) ->
@@ -772,8 +771,8 @@ compile(Asm) ->
                        return_warnings,
                        deterministic],
     case compile:forms(Asm, CompilerOptions) of
-        {ok, Module, Beam, []} -> {Module, Beam};
-        Error                  -> handle_compilation_error(Asm, Error)
+        {ok, _Module, Beam, []} -> Beam;
+        Error                   -> handle_compilation_error(Asm, Error)
     end.
 
 handle_compilation_error(
@@ -2614,7 +2613,8 @@ process_errors(#state{errors = [Error | _]}) ->
 
 -spec pass2(State) -> Ret when
       State :: #state{},
-      Ret :: {ok, Asm, FunNameMapping},
+      Ret :: {ok, GeneratedModuleName, Asm, FunNameMapping},
+      GeneratedModuleName :: module(),
       Asm :: asm(),
       FunNameMapping :: fun_name_mapping().
 
@@ -2651,7 +2651,7 @@ pass2(
            Attributes,
            Functions2,
            Labels},
-    {ok, Asm, FunNameMapping}.
+    {ok, GeneratedModuleName, Asm, FunNameMapping}.
 
 -spec pass2_process_functions(Functions, State) -> Functions when
       Functions :: #{mfa() => #function{}},
