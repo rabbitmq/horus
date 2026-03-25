@@ -72,7 +72,9 @@
 %% For internal use only.
 -export([override_object_code/2,
          forget_overridden_object_code/1,
-         do_get_object_code/1]).
+         do_get_object_code/1,
+         is_standalone_fun_loaded/1,
+         unload_standalone_fun/1]).
 
 -ifdef(TEST).
 -export([standalone_fun_cache_key/5,
@@ -1066,6 +1068,39 @@ load_standalone_fun(
                     end
             end
     end.
+
+-spec is_standalone_fun_loaded(StandaloneFun) -> IsLoaded when
+      StandaloneFun :: horus_fun(),
+      IsLoaded :: boolean().
+%% @doc Indicates in the module behind the given standalone function is already
+%% loaded or not.
+%%
+%% @private
+
+is_standalone_fun_loaded(#horus_fun{module = Module}) ->
+    horus_utils:is_module_loaded(Module);
+is_standalone_fun_loaded(Function) when is_function(Function) ->
+    false.
+
+-spec unload_standalone_fun(StandaloneFun) -> ok when
+      StandaloneFun :: horus_fun().
+%% @doc Unloads the given standalone function underlying module.
+%%
+%% @private
+
+unload_standalone_fun(#horus_fun{module = Module}) ->
+    Lock = {{horus, load, Module}, self()},
+    global:set_lock(Lock, [node()]),
+    try
+        _ = code:delete(Module),
+        _ = code:purge(Module),
+        ?assertNot(horus_utils:is_module_loaded(Module)),
+        ok
+    after
+        global:del_lock(Lock, [node()])
+    end;
+unload_standalone_fun(Function) when is_function(Function) ->
+    ok.
 
 -spec to_fun(StandaloneFun) -> Fun when
       StandaloneFun :: horus_fun(),
