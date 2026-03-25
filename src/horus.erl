@@ -72,12 +72,15 @@
 %% For internal use only.
 -export([override_object_code/2,
          forget_overridden_object_code/1,
-         do_get_object_code/1]).
+         do_get_object_code/1,
+         is_standalone_fun_loaded/1,
+         unload_standalone_fun/1]).
 
 -ifdef(TEST).
 -export([standalone_fun_cache_key/5,
          get_object_code/1,
          decode_line_chunk/2,
+         file_asm_to_compiler_asm/1,
          compile/1,
          to_actual_arg/1]).
 -endif.
@@ -503,8 +506,8 @@ to_standalone_fun3(
                     #state{literal_funs = LiteralFuns0} = State4,
                     LiteralFuns = maps:values(LiteralFuns0),
 
-                    {ok, Asm, FunNameMapping} = pass2(State4),
-                    {GeneratedModuleName, Beam} = compile(Asm),
+                    {ok, GeneratedModuleName, Asm, FunNameMapping} = pass2(State4),
+                    Beam = compile(Asm),
 
                     DebugInfo = case maps:get(debug_info, Options, false) of
                                     false ->
@@ -759,12 +762,11 @@ extract_module_info_functions(State) ->
 should_generate_module_info_functions(#state{options = Options}) ->
     maps:get(add_module_info, Options, true).
 
--spec compile(Asm) -> {Module, Beam} when
+-spec compile(Asm) -> Beam when
       Asm :: asm(), %% FIXME: compile:forms/2 is incorrectly specified.
-      Module :: module(),
       Beam :: binary().
 
-compile(Asm) ->
+compile(Asm) when is_tuple(Asm) ->
     CompilerOptions = [from_asm,
                        binary,
                        warnings_as_errors,
@@ -772,8 +774,18 @@ compile(Asm) ->
                        return_warnings,
                        deterministic],
     case compile:forms(Asm, CompilerOptions) of
-        {ok, Module, Beam, []} -> {Module, Beam};
-        Error                  -> handle_compilation_error(Asm, Error)
+        {ok, _Module, Beam, []} -> Beam;
+        Error                   -> handle_compilation_error(Asm, Error)
+    end;
+compile(AbstractCode) when is_list(AbstractCode) ->
+    CompilerOptions = [binary,
+                       warnings_as_errors,
+                       return_errors,
+                       return_warnings,
+                       deterministic],
+    case compile:forms(AbstractCode, CompilerOptions) of
+        {ok, _Module, Beam, []} -> Beam;
+        Error                   -> handle_compilation_error(AbstractCode, Error)
     end.
 
 handle_compilation_error(
@@ -1054,7 +1066,18 @@ load_standalone_fun(
                     global:del_lock(Lock, [node()]),
                     ok;
                 false ->
-                    Ret = code:load_binary(Module, ?MODULE_STRING, Beam),
+                    Beam1 = if
+                                is_binary(Beam) ->
+                                    %% The module is already compiled as a
+                                    %% beam, we can use it directly.
+                                    Beam;
+                                true ->
+                                    %% The module is not yet compiled to beam:
+                                    %% `Beam' could be source code or assembly.
+                                    %% In any case, we need to compile it.
+                                    compile(Beam)
+                            end,
+                    Ret = code:load_binary(Module, ?MODULE_STRING, Beam1),
                     global:del_lock(Lock, [node()]),
                     case Ret of
                         {module, _} ->
@@ -1067,6 +1090,39 @@ load_standalone_fun(
                     end
             end
     end.
+
+-spec is_standalone_fun_loaded(StandaloneFun) -> IsLoaded when
+      StandaloneFun :: horus_fun(),
+      IsLoaded :: boolean().
+%% @doc Indicates in the module behind the given standalone function is already
+%% loaded or not.
+%%
+%% @private
+
+is_standalone_fun_loaded(#horus_fun{module = Module}) ->
+    horus_utils:is_module_loaded(Module);
+is_standalone_fun_loaded(Function) when is_function(Function) ->
+    false.
+
+-spec unload_standalone_fun(StandaloneFun) -> ok when
+      StandaloneFun :: horus_fun().
+%% @doc Unloads the given standalone function underlying module.
+%%
+%% @private
+
+unload_standalone_fun(#horus_fun{module = Module}) ->
+    Lock = {{horus, load, Module}, self()},
+    global:set_lock(Lock, [node()]),
+    try
+        _ = code:delete(Module),
+        _ = code:purge(Module),
+        ?assertNot(horus_utils:is_module_loaded(Module)),
+        ok
+    after
+        global:del_lock(Lock, [node()])
+    end;
+unload_standalone_fun(Function) when is_function(Function) ->
+    ok.
 
 -spec to_fun(StandaloneFun) -> Fun when
       StandaloneFun :: horus_fun(),
@@ -2103,6 +2159,148 @@ do_disassemble(Beam) ->
                            lambdas = Lambdas},
     BeamFileRecordExt.
 
+-ifdef(TEST).
+-spec asm_to_beam_file_record(Asm) -> BeamFileRecordExt when
+      Asm :: [any()] | asm(),
+      BeamFileRecordExt :: #beam_file_ext{}.
+%% @private
+
+asm_to_beam_file_record(Asm) when is_list(Asm) ->
+    BeamFileRecordExt = #beam_file_ext{
+                           module = undefined,
+                           lines = undefined,
+                           strings = undefined,
+                           lambdas = undefined
+                          },
+    asm_to_beam_file_record1(Asm, BeamFileRecordExt).
+%% The following clause will be useful if we work with the assembly produced by
+%% the compiler, as opposed to the assembly from `beam_disasm'.
+% asm_to_beam_file_record({Module, Exports, Attributes, Functions, _Labels}) ->
+%     LabeledExports = exports_to_labeled_exports(Exports),
+%     Attributes1 = annotate_asm_attributes(Attributes),
+%     BeamFileRecordExt = #beam_file_ext{
+%                            module = Module,
+%                            labeled_exports = LabeledExports,
+%                            attributes = Attributes1,
+%                            code = Functions,
+%                            lines = undefined,
+%                            strings = undefined,
+%                            lambdas = undefined
+%                           },
+%     BeamFileRecordExt.
+
+asm_to_beam_file_record1(
+  [{module, Module} | Rest],
+  #beam_file_ext{module = undefined} = BeamFileRecordExt) ->
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           module = Module},
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt1);
+asm_to_beam_file_record1(
+  [{exports, Exports} | Rest],
+  BeamFileRecordExt) ->
+    LabeledExports = exports_to_labeled_exports(Exports),
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           labeled_exports = LabeledExports},
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt1);
+asm_to_beam_file_record1(
+  [{attributes, Attributes} | Rest],
+  BeamFileRecordExt) ->
+    Attributes1 = annotate_asm_attributes(Attributes),
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           attributes = Attributes1},
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt1);
+asm_to_beam_file_record1(
+  [{labels, _Labels} | Rest],
+  BeamFileRecordExt) ->
+    asm_to_beam_file_record1(Rest, BeamFileRecordExt);
+asm_to_beam_file_record1(
+  [Function | _] = Functions,
+  BeamFileRecordExt)
+  when is_tuple(Function) andalso element(1, Function) =:= function ->
+    asm_to_beam_file_record2(Functions, undefined, BeamFileRecordExt).
+
+asm_to_beam_file_record2(
+  [{function, FunName, Arity, EntryLabel} | Rest],
+  PreviousFunction,
+  BeamFileRecordExt) ->
+    BeamFileRecordExt1 = add_function(BeamFileRecordExt, PreviousFunction),
+    NewFunction = #function{name = FunName,
+                            arity = Arity,
+                            entry = EntryLabel,
+                            code = []},
+    asm_to_beam_file_record2(Rest, NewFunction, BeamFileRecordExt1);
+asm_to_beam_file_record2(
+  [Instruction | Rest],
+  #function{code = Code} = CurrentFunction,
+  BeamFileRecordExt) ->
+    Code1 = Code ++ [Instruction],
+    CurrentFunction1 = CurrentFunction#function{code = Code1},
+    asm_to_beam_file_record2(Rest, CurrentFunction1, BeamFileRecordExt);
+asm_to_beam_file_record2(
+  [],
+  CurrentFunction,
+  BeamFileRecordExt) ->
+    add_function(BeamFileRecordExt, CurrentFunction).
+
+exports_to_labeled_exports(Exports) ->
+    LabeledExports = [{FunName, Arity, -1}
+                      || {FunName, Arity} <- Exports],
+    LabeledExports.
+
+annotate_asm_attributes(Attributes) ->
+    Attributes1 = [{from_asm, true} | Attributes],
+    Attributes1.
+
+add_function(
+  #beam_file_ext{labeled_exports = LabeledExports,
+                 code = Code} = BeamFileRecordExt,
+  #function{name = FunName,
+            arity = Arity,
+            entry = Label} = Function) ->
+    LabeledExports1 = lists:map(
+                        fun
+                            ({FunName1, Arity1, _})
+                              when FunName1 =:= FunName andalso
+                                   Arity1 =:= Arity ->
+                                {FunName, Arity, Label};
+                            (Entry) ->
+                                Entry
+                        end, LabeledExports),
+    Code1 = Code ++ [Function],
+    BeamFileRecordExt1 = BeamFileRecordExt#beam_file_ext{
+                           labeled_exports = LabeledExports1,
+                           code = Code1},
+    BeamFileRecordExt1;
+add_function(
+  #beam_file_ext{} = BeamFileRecordExt,
+  undefined) ->
+    BeamFileRecordExt.
+
+-spec file_asm_to_compiler_asm(FileAsm) -> CompilerAsm when
+      FileAsm :: [any()] | asm(),
+      CompilerAsm :: asm().
+
+file_asm_to_compiler_asm(FileAsm) ->
+    BeamFileRecordExt = asm_to_beam_file_record(FileAsm),
+    #beam_file_ext{module = Module,
+                   labeled_exports = LabeledExports,
+                   code = Functions} = BeamFileRecordExt,
+    Exports = [{FunName, Arity} || {FunName, Arity, _} <- LabeledExports],
+    Attributes = [],
+    #function{code = Code} = lists:last(Functions),
+    LastLabel = lists:foldl(
+                  fun
+                      ({label, Label}, _Acc) -> Label;
+                      (_, Acc)               -> Acc
+                  end, 0, Code),
+    Labels = LastLabel + 1,
+    {Module,
+     Exports,
+     Attributes,
+     Functions,
+     Labels}.
+-endif.
+
 %% The "Line" beam chunk decoding is based on the equivalent C code in ERTS.
 %% See: erts/emulator/beam/beam_file.c, parse_line_chunk().
 %%
@@ -2614,7 +2812,8 @@ process_errors(#state{errors = [Error | _]}) ->
 
 -spec pass2(State) -> Ret when
       State :: #state{},
-      Ret :: {ok, Asm, FunNameMapping},
+      Ret :: {ok, GeneratedModuleName, Asm, FunNameMapping},
+      GeneratedModuleName :: module(),
       Asm :: asm(),
       FunNameMapping :: fun_name_mapping().
 
@@ -2651,7 +2850,7 @@ pass2(
            Attributes,
            Functions2,
            Labels},
-    {ok, Asm, FunNameMapping}.
+    {ok, GeneratedModuleName, Asm, FunNameMapping}.
 
 -spec pass2_process_functions(Functions, State) -> Functions when
       Functions :: #{mfa() => #function{}},

@@ -142,7 +142,8 @@ my_fun_module(Version) ->
            ], %% Functions
            7 %% Label
           },
-    horus:compile(Asm).
+    Beam = horus:compile(Asm),
+    {Module, Beam}.
 
 modified_module_causes_cache_miss_test() ->
     {Module, Beam1} = my_fun_module(1),

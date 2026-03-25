@@ -8,8 +8,12 @@
 
 -module(arbitrary_mod).
 
--export([min/2,
+-export([run/0,
+         min/2,
          call_inner_function/2]).
+
+run() ->
+    yay.
 
 min(A, B) ->
     erlang:min(A, B).
