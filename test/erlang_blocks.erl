@@ -12,6 +12,10 @@
 -feature(maybe_expr,enable).
 -endif.
 
+-if(?OTP_RELEASE >= 29).
+-compile(nowarn_deprecated_catch).
+-endif.
+
 -include_lib("eunit/include/eunit.hrl").
 
 -include("test/helpers.hrl").
