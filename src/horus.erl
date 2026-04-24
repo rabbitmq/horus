@@ -767,13 +767,28 @@ should_generate_module_info_functions(#state{options = Options}) ->
       Beam :: binary().
 
 compile(Asm) when is_tuple(Asm) ->
+    Asm1 = case does_compiler_support_native_records() of
+               true ->
+                   %% With the introduction of native records in Erlang/OTP 29,
+                   %% the format of the assembly tuple changed: it has a new
+                   %% element added to the fourth position, beam annotations.
+                   %%
+                   %% If the local compiler supports native records, we have to
+                   %% convert the 5-elements tuple to the 6-elements tuple with
+                   %% empty beam annotations.
+                   Anno = #{},
+                   {ModuleName, Exports, Attributes, Functions, Labels} = Asm,
+                   {ModuleName, Exports, Attributes, Anno, Functions, Labels};
+               false ->
+                   Asm
+           end,
     CompilerOptions = [from_asm,
                        binary,
                        warnings_as_errors,
                        return_errors,
                        return_warnings,
                        deterministic],
-    case compile:forms(Asm, CompilerOptions) of
+    case compile:forms(Asm1, CompilerOptions) of
         {ok, _Module, Beam, []} -> Beam;
         Error                   -> handle_compilation_error(Asm, Error)
     end;
@@ -787,6 +802,34 @@ compile(AbstractCode) when is_list(AbstractCode) ->
         {ok, _Module, Beam, []} -> Beam;
         Error                   -> handle_compilation_error(AbstractCode, Error)
     end.
+
+does_compiler_support_native_records() ->
+    Vsn = get_compiler_version(),
+    case Vsn of
+        [Maj | _] when Maj >= 10 ->
+            true;
+        _ ->
+            OTPRel = get_otp_release(),
+            case OTPRel of
+                _ when OTPRel >= 29 -> true;
+                _                   -> false
+            end
+    end.
+
+get_compiler_version() ->
+    case application:load(compiler) of
+        ok                           -> ok;
+        {error, {already_loaded, _}} -> ok
+    end,
+    {ok, Vsn0} = application:get_key(compiler, vsn),
+    Vsn1 = string:split(Vsn0, ".", all),
+    Vsn2 = [list_to_integer(I) || I <- Vsn1],
+    Vsn2.
+
+get_otp_release() ->
+    OTPRel0 = erlang:system_info(otp_release),
+    OTPRel1 = list_to_integer(OTPRel0),
+    OTPRel1.
 
 handle_compilation_error(
   Asm,
@@ -1568,6 +1611,11 @@ pass1_process_instructions(
         false ->
             pass1_process_instructions(Rest, State, Result)
     end;
+pass1_process_instructions(
+  [{line, Args} = Instruction | Rest],
+  State,
+  Result) when is_list(Args) ->
+    pass1_process_instructions(Rest, State, [Instruction | Result]);
 pass1_process_instructions(
   [{executable_line, Index, _Unknown} = Instruction | Rest],
   #state{lines_in_progress = Lines} = State,

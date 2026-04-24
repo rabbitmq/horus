@@ -52,7 +52,7 @@ can_compile_asm_test() ->
 
     ?assertError(
        ?horus_exception(compilation_failure, #{}),
-       horus:compile({})).
+       horus:compile({a, b, c, d, e})).
 
 can_compile_abtract_code_test() ->
     Mod = arbitrary_mod,
