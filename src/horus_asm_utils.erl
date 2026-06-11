@@ -13,7 +13,8 @@
 
 -include("src/horus_error.hrl").
 
--export([disassemble/1]).
+-export([disassemble/1,
+         get_fun_start_line/1]).
 
 -type beam_instr() :: atom() | tuple().
 
@@ -278,3 +279,59 @@ do_unpack_varint(I, Size, <<Byte:8/unsigned-integer, Rest/binary>>, Res)
     do_unpack_varint(I + 1, Size, Rest, Res1);
 do_unpack_varint(I, I = _Size, <<>> = _Rest, Res) ->
     Res.
+
+-spec get_fun_start_line(Fun) -> StartLine when
+      Fun :: fun(),
+      StartLine :: pos_integer().
+
+get_fun_start_line(Fun) ->
+    FunInfo = horus_erlfun_utils:info(Fun),
+    #{module := Module,
+      name := FunName,
+      arity := Arity,
+      env := Env} = FunInfo,
+    Arity1 = Arity + length(Env),
+    Beam = horus_beam_utils:get_beam(Module),
+    Asm = disassemble(Beam),
+    get_fun_start_line(Asm, Module, FunName, Arity1, Asm).
+
+get_fun_start_line(
+  [{function, FunName, Arity, _EntryLabel} | Rest],
+  Module, FunName, Arity, Asm) ->
+    case Rest of
+        [{line, Args} | _] ->
+            case lists:keyfind(location, 1, Args) of
+                {location, _FileName, Line} ->
+                    Line;
+                false ->
+                    ?horus_misuse(
+                       failed_to_determine_fun_start_line,
+                       #{module => Module,
+                         fun_name => FunName,
+                         arity => Arity,
+                         reason => no_location_info_in_line_instruction,
+                         asm => Asm})
+            end;
+        _ ->
+            ?horus_misuse(
+               failed_to_determine_fun_start_line,
+               #{module => Module,
+                 fun_name => FunName,
+                 arity => Arity,
+                 reason => no_line_instruction_following_function_start,
+                 asm => Asm})
+    end;
+get_fun_start_line(
+  [_Instruction | Rest],
+  Module, FunName, Arity, Asm) ->
+    get_fun_start_line(Rest, Module, FunName, Arity, Asm);
+get_fun_start_line(
+  [],
+  Module, FunName, Arity, Asm) ->
+    ?horus_misuse(
+       failed_to_determine_fun_start_line,
+       #{module => Module,
+         fun_name => FunName,
+         arity => Arity,
+         reason => function_not_found,
+         asm => Asm}).

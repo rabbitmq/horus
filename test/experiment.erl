@@ -24,7 +24,7 @@ bitstring_flags_test() ->
                      <<-42:4/big-signed-integer-unit:8>>),
     BigUnsignedBin = helpers:ensure_not_optimized(
                        <<42:4/big-unsigned-integer-unit:8>>),
-    Fun = fun() ->
+    Fun = fun(_A) ->
                   {match_bitstring_flags(
                      {little_signed, LittleSignedBin}),
                    match_bitstring_flags(

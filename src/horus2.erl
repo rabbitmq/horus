@@ -11,24 +11,80 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
--include("include/horus.hrl").
--include("src/horus_cover.hrl").
--include("src/horus_fun.hrl").
--include("src/horus_error.hrl").
+-include("src/horus_abscode_utils.hrl").
 
 -export([to_standalone_fun/1]).
 
 to_standalone_fun(Fun) ->
     FunInfo = maps:from_list(erlang:fun_info(Fun)),
-    #{module := _Module,
+    #{module := Module,
       name := _FunName,
       arity := Arity,
       env := Env} = FunInfo,
     Arity1 = Arity + length(Env),
 
-    AbstractCode = horus_beam_utils:get_fun_abstract_code(Fun),
+    %% Make a list of needed functions with:
+    %% * origin: module:function/arity + filename + line number
+    %% * abstract code
+    %% * what they call (?)
+    %%
+    %% When preparing a particular function:
+    %% * look for undefined variables
+    %% * look for calls
+    %% * look for allowed/denied expressions
+    %% * patch calls: the arguments of the call should be enough to know
+    %%   deterministically what the new embedded call will be, right?
+
+    {ok, AbstractCode} = horus_abscode_utils:get(Fun),
     logger:alert("Fun abstract code: ~p", [AbstractCode]),
-    {'fun', Location, {clauses, Clauses}} = AbstractCode,
+
+    PreCallback = fun
+                      (#call{call = Call, args = CallArgs} = Expr, _Vars, #{calls := Calls} = Priv1) ->
+                          case Call of
+                              #atom{name = Name} ->
+                                  CallArity = length(CallArgs),
+                                  Calls1 = Calls#{{Module, Name, CallArity} => true},
+                                  Priv2 = Priv1#{calls => Calls1},
+                                  {continue, Expr, Priv2}
+                          end;
+                      (Expr, _Vars, Priv1) ->
+                          % logger:alert("[pre] Expr = ~p~nVars = ~p", [Expr, Vars]),
+                          {continue, Expr, Priv1}
+                  end,
+    PostCallback = fun
+                       (#clause{args = Args} = Expr, Vars, Priv1) ->
+                           UnboundVars1 = maps:fold(
+                                            fun
+                                                (_Name, true, Acc) ->
+                                                    Acc;
+                                                (Name, false, Acc) ->
+                                                    [Name | Acc]
+                                            end, [], Vars),
+                           UnboundVars2 = lists:sort(UnboundVars1),
+                           ArgsFromEnv = [#var{location = {0, 0},
+                                               name = UnboundVar}
+                                          || UnboundVar <- UnboundVars2],
+                           Args1 = Args ++ ArgsFromEnv,
+                           Expr1 = Expr#clause{args = Args1},
+                           {continue, Expr1, Priv1};
+                       (Expr, _Vars, Priv1) ->
+                           {continue, Expr, Priv1}
+                   end,
+    Priv = #{module => Module,
+             calls => #{}},
+    Ret = horus_abscode_utils:fold(
+            AbstractCode,
+            PreCallback, PostCallback,
+            Priv),
+    logger:alert("Ret = ~p", [Ret]),
+    {ok, AbstractCode1, NewPriv} = Ret,
+
+    #{calls := Calls} = NewPriv,
+    [{M, F, A} | _] = maps:keys(Calls),
+    {ok, AC} = horus_abscode_utils:get(M, F, A),
+    logger:alert("~s:~s/~b = ~p", [M, F, A, AC]),
+
+    {'fun', Location, {clauses, Clauses}} = AbstractCode1,
     Code = [{attribute,
              {1,1},
              file,
@@ -59,6 +115,10 @@ to_standalone_fun(Fun) ->
             {function,
              Location,
              bitstring_flags_test, Arity1, Clauses}],
+    logger:alert(
+      "Generated module abstract code:~n  ~p~nAs Erlang source code:~n~ts",
+      [Code, horus_abscode_utils:to_erlang_code(Code)]),
+
     CompilerOptions = [binary,
                        warnings_as_errors,
                        return_errors,

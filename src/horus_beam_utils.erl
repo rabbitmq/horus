@@ -14,9 +14,7 @@
 -include("src/horus_error.hrl").
 
 -export([get_beam/1,
-         get_abstract_code/1,
-         get_fun_abstract_code/1,
-         get_fun_start_line/1]).
+         get_abstract_code/1]).
 
 -type beam() :: binary().
 
@@ -53,120 +51,75 @@ get_abstract_code(Beam) when is_binary(Beam) ->
             ?horus_misuse(
                abstract_code_unavailable,
                Props)
-    end.
-
--spec get_fun_abstract_code(Fun) -> AbstractCode when
-      Fun :: fun(),
-      AbstractCode :: beam_lib:abs_code().
-
-get_fun_abstract_code(Fun) ->
-    FunInfo = maps:from_list(erlang:fun_info(Fun)),
-    #{module := Module,
-      name := _FunName,
-      arity := _Arity} = FunInfo,
-    StartLine = get_fun_start_line(Fun),
-    Beam = get_beam(Module),
-    AbstractCode = get_abstract_code(Beam),
-    logger:alert("AbstractCode = ~p", [AbstractCode]),
-    locate_function_abstract_code(AbstractCode, {'fun', StartLine}).
-
-locate_function_abstract_code(
-  [{function, _Location, _FunName, _Arity, Clauses} | Rest],
-  Target) ->
-    locate_function_abstract_code(Clauses ++ Rest, Target);
-locate_function_abstract_code(
-  [{'fun', {StartLine, _StartCol}, _Clauses} = AbstractCode | _Rest],
-  {'fun', StartLine}) ->
-    AbstractCode;
-locate_function_abstract_code(
-  [{'fun', _Location, Clauses} | Rest],
-  Target) ->
-    locate_function_abstract_code(Clauses ++ Rest, Target);
-locate_function_abstract_code(
-  [{clause, _Location, _Arg, _Guards, Body} | Rest],
-  Target) ->
-    locate_function_abstract_code(Body ++ Rest, Target);
-locate_function_abstract_code(
-  [{match, _Location, Left, Right} | Rest],
-  Target) ->
-    locate_function_abstract_code([Left, Right | Rest], Target);
-locate_function_abstract_code(
-  [{var, _Location, _Name} | Rest],
-  Target) ->
-    locate_function_abstract_code(Rest, Target);
-locate_function_abstract_code(
-  [{atom, _Location, _Name} | Rest],
-  Target) ->
-    locate_function_abstract_code(Rest, Target);
-locate_function_abstract_code(
-  [{tuple, _Location, Elements} | Rest],
-  Target) ->
-    locate_function_abstract_code(Elements ++ Rest, Target);
-locate_function_abstract_code(
-  [{call, _Location, _Call, _Args} | Rest],
-  Target) ->
-    locate_function_abstract_code(Rest, Target);
-locate_function_abstract_code(
-  [{attribute, _, _, _} | Rest],
-  Target) ->
-    locate_function_abstract_code(Rest, Target);
-locate_function_abstract_code(
-  [], _Target) ->
-    false.
-
--spec get_fun_start_line(Fun) -> StartLine when
-      Fun :: fun(),
-      StartLine :: pos_integer().
-
-get_fun_start_line(Fun) ->
-    FunInfo = maps:from_list(erlang:fun_info(Fun)),
-    #{module := Module,
-      name := FunName,
-      arity := Arity,
-      env := Env} = FunInfo,
-    Arity1 = Arity + length(Env),
-    Beam = get_beam(Module),
-    Asm = horus_asm_utils:disassemble(Beam),
-    get_fun_start_line(Asm, Module, FunName, Arity1, Asm).
-
-get_fun_start_line(
-  [{function, FunName, Arity, _EntryLabel} | Rest],
-  Module, FunName, Arity, Asm) ->
-    case Rest of
-        [{line, Args} | _] ->
-            case lists:keyfind(location, 1, Args) of
-                {location, _FileName, Line} ->
-                    Line;
-                false ->
-                    ?horus_misuse(
-                       failed_to_determine_fun_start_line,
-                       #{module => Module,
-                         fun_name => FunName,
-                         arity => Arity,
-                         reason => no_location_info_in_line_instruction,
-                         asm => Asm})
-            end;
-        _ ->
-            ?horus_misuse(
-               failed_to_determine_fun_start_line,
-               #{module => Module,
-                 fun_name => FunName,
-                 arity => Arity,
-                 reason => no_line_instruction_following_function_start,
-                 asm => Asm})
     end;
-get_fun_start_line(
-  [_Instruction | Rest],
-  Module, FunName, Arity, Asm) ->
-    % io:format(standard_error, "Instr: ~0p~n", [_Instruction]),
-    get_fun_start_line(Rest, Module, FunName, Arity, Asm);
-get_fun_start_line(
-  [],
-  Module, FunName, Arity, Asm) ->
-    ?horus_misuse(
-       failed_to_determine_fun_start_line,
-       #{module => Module,
-         fun_name => FunName,
-         arity => Arity,
-         reason => function_not_found,
-         asm => Asm}).
+get_abstract_code(Module) when is_atom(Module) ->
+    Beam = get_beam(Module),
+    get_abstract_code(Beam).
+
+% -spec get_fun_abstract_code(Fun) -> AbstractCode when
+%       Fun :: fun(),
+%       AbstractCode :: beam_lib:abs_code().
+%
+% get_fun_abstract_code(Fun) ->
+%     FunInfo = maps:from_list(erlang:fun_info(Fun)),
+%     #{module := Module,
+%       name := _FunName,
+%       arity := _Arity} = FunInfo,
+%     StartLine = get_fun_start_line(Fun),
+%     Beam = get_beam(Module),
+%     AbstractCode = get_abstract_code(Beam),
+%     logger:alert("AbstractCode = ~p", [AbstractCode]),
+%     locate_function_abstract_code(AbstractCode, {'fun', StartLine}).
+
+%% Make this scan function generic:
+%% * stackable scopes + "instruction" to unstack a scope when exiting one (to
+%%   maintain a tail-recursive scanning function)
+%% * take a callback that can indicate if the scan should continue (e.g. stop
+%%   the current expression/scope or stop entirely)
+%% How to patch a function, like its calls?
+
+%% TODO: Use fold/4.
+
+% locate_function_abstract_code(
+%   [{function, _Location, _FunName, _Arity, Clauses} | Rest],
+%   Target) ->
+%     locate_function_abstract_code(Clauses ++ Rest, Target);
+% locate_function_abstract_code(
+%   [{'fun', {StartLine, _StartCol}, _Clauses} = AbstractCode | _Rest],
+%   {'fun', StartLine}) ->
+%     AbstractCode;
+% locate_function_abstract_code(
+%   [{'fun', _Location, Clauses} | Rest],
+%   Target) ->
+%     locate_function_abstract_code(Clauses ++ Rest, Target);
+% locate_function_abstract_code(
+%   [{clause, _Location, _Arg, _Guards, Body} | Rest],
+%   Target) ->
+%     locate_function_abstract_code(Body ++ Rest, Target);
+% locate_function_abstract_code(
+%   [{match, _Location, Left, Right} | Rest],
+%   Target) ->
+%     locate_function_abstract_code([Left, Right | Rest], Target);
+% locate_function_abstract_code(
+%   [{var, _Location, _Name} | Rest],
+%   Target) ->
+%     locate_function_abstract_code(Rest, Target);
+% locate_function_abstract_code(
+%   [{atom, _Location, _Name} | Rest],
+%   Target) ->
+%     locate_function_abstract_code(Rest, Target);
+% locate_function_abstract_code(
+%   [{tuple, _Location, Elements} | Rest],
+%   Target) ->
+%     locate_function_abstract_code(Elements ++ Rest, Target);
+% locate_function_abstract_code(
+%   [{call, _Location, _Call, _Args} | Rest],
+%   Target) ->
+%     locate_function_abstract_code(Rest, Target);
+% locate_function_abstract_code(
+%   [{attribute, _, _, _} | Rest],
+%   Target) ->
+%     locate_function_abstract_code(Rest, Target);
+% locate_function_abstract_code(
+%   [], _Target) ->
+%     false.
