@@ -14,7 +14,6 @@
 -include("src/horus_abscode_utils.hrl").
 
 -export([get/1,
-         get/3,
          fold/4,
          to_erlang_code/1]).
 
@@ -69,7 +68,7 @@
               internal_expression/0,
               expression/0]).
 
-get(Fun) ->
+get(Fun) when is_function(Fun) ->
     FunInfo = horus_erlfun_utils:info(Fun),
     #{module := Module} = FunInfo,
     StartLine = horus_asm_utils:get_fun_start_line(Fun),
@@ -89,7 +88,6 @@ get(Fun) ->
                       (Expr, _Vars, Priv) ->
                           {continue, Expr, Priv}
                   end,
-    logger:alert("Module abstract code: ~p", [AbstractCode]),
     case fold(AbstractCode, PreCallback, none, #{}) of
         {ok, _, #{source_file := SourceFile, abstract_code := AbstractCode1}} ->
             AbstractCode2 = [SourceFile, AbstractCode1],
@@ -99,9 +97,8 @@ get(Fun) ->
             {ok, AbstractCode2};
         {ok, _, _Priv} ->
             {error, not_found}
-    end.
-
-get(Module, Name, Arity) ->
+    end;
+get({Module, Name, Arity}) ->
     Beam = horus_beam_utils:get_beam(Module),
     AbstractCode = horus_beam_utils:get_abstract_code(Beam),
     PreCallback = fun

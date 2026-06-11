@@ -16,139 +16,216 @@
 
 -export([to_standalone_fun/1]).
 
+-record(fun_extract, {module,
+                      name,
+                      arity,
+                      fun_info = undefined,
+                      abstract_code = undefined}).
+
+-record(extraction, {'fun',
+                     fun_info,
+                     functions = #{}}).
+
 to_standalone_fun(Fun) ->
     FunInfo = maps:from_list(erlang:fun_info(Fun)),
+    InitialFunctions = #{Fun => undefined},
+    Extraction = #extraction{'fun' = Fun,
+                             fun_info = FunInfo,
+                             functions = InitialFunctions},
+    extract_missing_functions(Extraction).
+
+extract_missing_functions(#extraction{functions = Functions} = Extraction) ->
+    MissingFuns = maps:fold(
+                    fun
+                        (Reference, undefined, Acc)    -> [Reference | Acc];
+                        (_Reference, _FunExtract, Acc) -> Acc
+                    end, [], Functions),
+    case MissingFuns of
+        [] -> create_standanole_fun(Extraction);
+        _  -> do_extract_missing_functions(MissingFuns, Extraction)
+    end.
+
+do_extract_missing_functions([MissingFun | Rest], Extraction) ->
+    Extraction1 = extract_function(MissingFun, Extraction),
+    do_extract_missing_functions(Rest, Extraction1);
+do_extract_missing_functions([], Extraction) ->
+    extract_missing_functions(Extraction).
+
+extract_function(Fun, #extraction{'fun' = EntryPoint} = Extraction)
+  when is_function(Fun) ->
+    FunInfo = maps:from_list(erlang:fun_info(Fun)),
     #{module := Module,
-      name := _FunName,
+      name := Name,
       arity := Arity,
       env := Env} = FunInfo,
-    Arity1 = Arity + length(Env),
-
-    %% Make a list of needed functions with:
-    %% * origin: module:function/arity + filename + line number
-    %% * abstract code
-    %% * what they call (?)
-    %%
-    %% When preparing a particular function:
-    %% * look for undefined variables
-    %% * look for calls
-    %% * look for allowed/denied expressions
-    %% * patch calls: the arguments of the call should be enough to know
-    %%   deterministically what the new embedded call will be, right?
-
-    {ok, AbstractCode} = horus_abscode_utils:get(Fun),
-    logger:alert("Fun abstract code: ~p", [AbstractCode]),
-
-    PreCallback = fun
-                      (#call{call = Call, args = CallArgs} = Expr, _Vars, #{calls := Calls} = Priv1) ->
-                          case Call of
-                              #atom{name = Name} ->
-                                  CallArity = length(CallArgs),
-                                  Calls1 = Calls#{{Module, Name, CallArity} => true},
-                                  Priv2 = Priv1#{calls => Calls1},
-                                  {continue, Expr, Priv2}
-                          end;
-                      (Expr, _Vars, Priv1) ->
-                          % logger:alert("[pre] Expr = ~p~nVars = ~p", [Expr, Vars]),
-                          {continue, Expr, Priv1}
-                  end,
-    PostCallback = fun
-                       (#clause{args = Args} = Expr, Vars, Priv1) ->
-                           UnboundVars1 = maps:fold(
-                                            fun
-                                                (_Name, true, Acc) ->
-                                                    Acc;
-                                                (Name, false, Acc) ->
-                                                    [Name | Acc]
-                                            end, [], Vars),
-                           UnboundVars2 = lists:sort(UnboundVars1),
-                           ArgsFromEnv = [#var{location = 0,
-                                               name = UnboundVar}
-                                          || UnboundVar <- UnboundVars2],
-                           Args1 = Args ++ ArgsFromEnv,
-                           Expr1 = Expr#clause{args = Args1},
-                           {continue, Expr1, Priv1};
-                       (Expr, _Vars, Priv1) ->
-                           {continue, Expr, Priv1}
+    InternalName = case Fun =:= EntryPoint of
+                       true  -> run;
+                       false -> gen_function_name(Module, Name)
                    end,
-    Priv = #{module => Module,
-             calls => #{}},
-    Ret = horus_abscode_utils:fold(
-            AbstractCode,
-            PreCallback, PostCallback,
-            Priv),
-    logger:alert("Ret = ~p", [Ret]),
-    {ok, AbstractCode1, NewPriv} = Ret,
+    RealArity = Arity + length(Env),
+    FunExtract = #fun_extract{module = Module,
+                              name = InternalName,
+                              arity = RealArity,
+                              fun_info = FunInfo},
+    do_extract_function(Fun, FunExtract, Extraction);
+extract_function({Module, Name, Arity} = MFA, Extraction) ->
+    InternalName = gen_function_name(Module, Name),
+    FunExtract = #fun_extract{module =  Module,
+                              name = InternalName,
+                              arity = Arity},
+    do_extract_function(MFA, FunExtract, Extraction).
 
-    #{calls := Calls} = NewPriv,
-    [{M, F, A} | _] = maps:keys(Calls),
-    {ok, AC} = horus_abscode_utils:get(M, F, A),
-    logger:alert("~s:~s/~b = ~p", [M, F, A, AC]),
+do_extract_function(
+  Reference,
+  #fun_extract{module = ThisModule,
+               name = InternalName,
+               arity = RealArity} = FunExtract,
+  Extraction) ->
+    {ok, AbstractCode1} = horus_abscode_utils:get(Reference),
 
-    [SourceFileAttr, #'fun'{location = Location, code = #clauses{clauses = Clauses}}] = AbstractCode1,
+    %% Goals:
+    %% 1. Is the expression allowed?
+    %% 2. Find new calls
+    PreCallback1 = fun
+                       (#call{call = Call, args = CallArgs} = Expr,
+                        _Vars,
+                        #extraction{functions = Functions} = Extraction1) ->
+                           CallReference = (
+                             case Call of
+                                 %% Local call.
+                                 #atom{name = CalledName} ->
+                                     CallArity = length(CallArgs),
+                                     {ThisModule, CalledName, CallArity}
+                             end),
+                           Extraction2 = (
+                             case Functions of
+                                 #{CallReference := _} ->
+                                     Extraction1;
+                                 _ ->
+                                     Functions1 = Functions#{
+                                                    CallReference => undefined
+                                                   },
+                                     Extraction1#extraction{
+                                       functions = Functions1
+                                      }
+                             end),
+                           {continue, Expr, Extraction2};
+                       (Expr, _Vars, Extraction1) ->
+                           {continue, Expr, Extraction1}
+                   end,
 
-    GeneratedModuleName = youpi,
-    Code = ([#attribute{location = 0, name = module, value = GeneratedModuleName},
-             #attribute{location = 0, name = export, value = [{run, Arity1}]},
-             SourceFileAttr,
-             #function{location = Location, name = run, arity = Arity1, clauses = Clauses}] ++
-            AC),
+    %% Goals:
+    %% 1. Add missing arguments for `fun()' taking arguments from their
+    %%    environment.
+    PostCallback1 = fun
+                        (#clause{args = Args} = Expr, Vars, Extraction1) ->
+                            UnboundVars1 = maps:fold(
+                                             fun
+                                                 (_Name, true, Acc) ->
+                                                     Acc;
+                                                (Name, false, Acc) ->
+                                                     [Name | Acc]
+                                             end, [], Vars),
+                            UnboundVars2 = lists:sort(UnboundVars1),
+                            ArgsFromEnv = [#var{location = 0,
+                                                name = UnboundVar}
+                                           || UnboundVar <- UnboundVars2],
+                            Args1 = Args ++ ArgsFromEnv,
+                            Expr1 = Expr#clause{args = Args1},
+                            {continue, Expr1, Extraction1};
+                       (Expr, _Vars, Extraction1) ->
+                            {continue, Expr, Extraction1}
+                    end,
+    {ok, AbstractCode2, Extraction2} = horus_abscode_utils:fold(
+                                         AbstractCode1,
+                                         PreCallback1, PostCallback1,
+                                         Extraction),
+
+    %% Goals:
+    %% 1. Transform a `fun()' into a regular function.
+    PreCallback2 = fun
+                       (#'fun'{location = Location,
+                               code = #clauses{clauses = Clauses}},
+                        _Vars,
+                        Priv) ->
+                           Expr1 = #function{location = Location,
+                                             name = InternalName,
+                                             arity = RealArity,
+                                             clauses = Clauses},
+                           {skip, Expr1, Priv};
+                       (Expr, _Vars, Priv) ->
+                           {continue, Expr, Priv}
+                   end,
+    {ok, AbstractCode3, _} = horus_abscode_utils:fold(
+                               AbstractCode2,
+                               PreCallback2, none,
+                               undefined),
+
+    FunExtract1 = FunExtract#fun_extract{abstract_code = AbstractCode3},
+    #extraction{functions = Functions} = Extraction2,
+    Functions1 = Functions#{Reference => FunExtract1},
+    Extraction3 = Extraction2#extraction{functions = Functions1},
+    Extraction3.
+
+create_standanole_fun(
+  #extraction{'fun' = Fun, functions = Functions} = Extraction) ->
+    GeneratedModuleName = gen_module_name(Extraction),
+    EntryPoint = maps:get(Fun, Functions),
+    #fun_extract{name = EntryPointName,
+                 arity = EntryPointArity,
+                 fun_info = #{arity := Arity,
+                              env := Env}} = EntryPoint,
+    FunctionsRefs = lists:sort(maps:keys(Functions)),
+    FunctionsAbstractCode = lists:foldl(
+                              fun(Reference, Acc) ->
+                                      #fun_extract{
+                                         abstract_code = AbstractCode
+                                        } = maps:get(Reference, Functions),
+                                      Acc ++ AbstractCode
+                              end, [], FunctionsRefs),
+    AbstractCode = [#attribute{location = 0,
+                               name = module,
+                               value = GeneratedModuleName},
+                    #attribute{location = 0,
+                               name = export,
+                               value = [{EntryPointName, EntryPointArity}]} |
+                    FunctionsAbstractCode],
     logger:alert(
-      "Generated module abstract code:~n  ~p~nAs Erlang source code:~n~ts",
-      [Code, horus_abscode_utils:to_erlang_code(Code)]),
+      "Generated module abstract code:~n~p~n",
+      [AbstractCode]),
+    logger:alert(
+      "Generated module Erlang source code:~n~ts~n",
+      [horus_abscode_utils:to_erlang_code(AbstractCode)]),
 
     StandaloneFun = #horus_fun{
                        module = GeneratedModuleName,
-                       beam = Code,
+                       beam = AbstractCode,
                        arity = Arity,
                        literal_funs = [],
-                       fun_name_mapping = #{{run, 4} => {a, b, 0},
-                                            {F, A} => {M, F, A}},
+                       fun_name_mapping = #{{EntryPointName, EntryPointArity} => {a, b, 0}},
                        env = Env},
-
-    % CompilerOptions = [binary,
-    %                    warnings_as_errors,
-    %                    return_errors,
-    %                    return_warnings,
-    %                    deterministic],
-    % compile:forms(Code, CompilerOptions).
 
     {ok, StandaloneFun}.
 
-%     Info = maps:from_list(erlang:fun_info(Fun)),
-%     logger:alert("Info = ~p", [Info]),
-%     #{module := Module,
-%       name := _Name,
-%       arity := _Arity} = Info,
-%     Beam = get_beam(Module),
-%     logger:alert("Beam = ~p", [beam_lib:all_chunks(Beam)]),
-%     LambdaChunk = horus:get_and_decode_lambda_chunk(Module, Beam),
-%     logger:alert("LambdaChunk = ~p", [LambdaChunk]),
-%     LineChunk = horus:get_and_decode_line_chunk(Module, Beam),
-%     logger:alert("LineChunk = ~p", [LineChunk]),
-%     AbstractCode = get_abstract_code(Beam),
-%     logger:alert("AbstractCode = ~p", [AbstractCode]),
-%     logger:alert("Atoms = ~p", [beam_lib:chunks(Beam, [atoms])]),
-%     % logger:alert("Literals = ~p", [beam_lib:chunks(Beam, [literals])]),
-%     % logger:alert("Strings = ~p", [horus:get_and_decode_string_chunk(Module, Beam)]),
-%     CompilerOptions = [from_abstr,
-%                        'S',
-%                        binary,
-%                        return_errors,
-%                        return_warnings,
-%                        deterministic],
-%     logger:alert("Asm = ~p", [compile:forms(AbstractCode, CompilerOptions)]),
-%     ok.
-%
-% get_abstract_code(Beam) ->
-%     Ret = beam_lib:chunks(Beam, [abstract_code]),
-%     case Ret of
-%         {ok, {_Module, [{abstract_code, {raw_abstract_v1, Code}}]}} ->
-%             Code
-%     end.
-%
-% get_beam(Module) ->
-%     case code:get_object_code(Module) of
-%         {_Module, Beam, _Filename} ->
-%             Beam
-%     end.
+-spec gen_module_name(Extraction) -> Module when
+      Extraction :: #extraction{},
+      Module :: module().
+
+gen_module_name(#extraction{fun_info = Info, functions = Functions}) ->
+    #{module := Module,
+      name := Name} = Info,
+    Checksum = erlang:phash2(Functions),
+    InternalName = lists:flatten(
+                     io_lib:format(
+                       "horus__~s__~s__~b", [Module, Name, Checksum])),
+    list_to_atom(InternalName).
+
+-spec gen_function_name(Module, Name) -> Name when
+      Module :: module(),
+      Name :: atom().
+
+gen_function_name(Module, Name) ->
+    InternalName = lists:flatten(
+                     io_lib:format(
+                       "~s__~s", [Module, Name])),
+    list_to_atom(InternalName).
