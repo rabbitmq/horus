@@ -66,42 +66,60 @@ get(Fun) ->
     FunInfo = horus_erlfun_utils:info(Fun),
     #{module := Module} = FunInfo,
     StartLine = horus_asm_utils:get_fun_start_line(Fun),
-    AbstractCode = horus_beam_utils:get_abstract_code(Module),
+    Beam = horus_beam_utils:get_beam(Module),
+    AbstractCode = horus_beam_utils:get_abstract_code(Beam),
     PreCallback = fun
+                      (#attribute{name = file} = Expr,
+                       _Vars, Priv) ->
+                          Priv1 = Priv#{source_file => Expr},
+                          {continue, Expr, Priv1};
                       (#'fun'{location = {StartLine1, _StartCol}} = Expr,
-                       _Vars, undefined)
-                        when StartLine1 =:= StartLine ->
-                          Priv = Expr,
-                          {abort, Priv};
+                       _Vars, Priv)
+                        when not is_map_key(abstract_code, Priv) andalso
+                             StartLine1 =:= StartLine ->
+                          Priv1 = Priv#{abstract_code => Expr},
+                          {abort, Priv1};
                       (Expr, _Vars, Priv) ->
-                          logger:alert("Start line = ~b~nExpr = ~0p", [StartLine, Expr]),
                           {continue, Expr, Priv}
                   end,
     logger:alert("Module abstract code: ~p", [AbstractCode]),
-    case fold(AbstractCode, PreCallback, none, undefined) of
-        {ok, _, undefined} ->
-            {error, not_found};
-        {ok, _, AbstractCode1} ->
-            {ok, AbstractCode1}
+    case fold(AbstractCode, PreCallback, none, #{}) of
+        {ok, _, #{source_file := SourceFile, abstract_code := AbstractCode1}} ->
+            AbstractCode2 = [SourceFile, AbstractCode1],
+            {ok, AbstractCode2};
+        {ok, _, #{abstract_code := AbstractCode1}} ->
+            AbstractCode2 = [AbstractCode1],
+            {ok, AbstractCode2};
+        {ok, _, _Priv} ->
+            {error, not_found}
     end.
 
 get(Module, Name, Arity) ->
     Beam = horus_beam_utils:get_beam(Module),
     AbstractCode = horus_beam_utils:get_abstract_code(Beam),
     PreCallback = fun
+                      (#attribute{name = file} = Expr,
+                       _Vars, Priv) ->
+                          Priv1 = Priv#{source_file => Expr},
+                          {continue, Expr, Priv1};
                       (#function{name = Name1, arity = Arity1} = Expr,
-                       _Vars, undefined)
-                        when Name1 =:= Name andalso Arity1 =:= Arity ->
-                          Priv = Expr,
-                          {abort, Priv};
+                       _Vars, Priv)
+                        when not is_map_key(abstract_code, Priv) andalso
+                             Name1 =:= Name andalso Arity1 =:= Arity ->
+                          Priv1 = Priv#{abstract_code => Expr},
+                          {abort, Priv1};
                       (_Expr, _Vars, Priv) ->
                           {skip, Priv}
                   end,
-    case fold(AbstractCode, PreCallback, none, undefined) of
-        {ok, _, undefined} ->
-            {error, not_found};
-        {ok, _, AbstractCode1} ->
-            {ok, AbstractCode1}
+    case fold(AbstractCode, PreCallback, none, #{}) of
+        {ok, _, #{source_file := SourceFile, abstract_code := AbstractCode1}} ->
+            AbstractCode2 = [SourceFile, AbstractCode1],
+            {ok, AbstractCode2};
+        {ok, _, #{abstract_code := AbstractCode1}} ->
+            AbstractCode2 = [AbstractCode1],
+            {ok, AbstractCode2};
+        {ok, _, _Priv} ->
+            {error, not_found}
     end.
 
 fold(AbstractCode, PreCallback, PostCallback, Priv) when is_list(AbstractCode) ->
@@ -131,8 +149,21 @@ fold(
 fold(
   [#attribute{} = Expr | Rest],
   Fold) ->
-    Fold1 = push_expression(Expr, Fold),
-    fold(Rest, Fold1);
+    case pre_callback(Expr, Fold) of
+        {continue, Expr1, Fold1} ->
+            case post_callback(Expr1, Fold1) of
+                {continue, Expr2, Fold2} ->
+                    Fold3 = push_expression(Expr2, Fold2),
+                    fold(Rest, Fold3);
+                {abort, _Fold2} = Ret ->
+                    Ret
+            end;
+        {skip, Fold1} ->
+            Fold2 = push_expression(Expr, Fold1),
+            fold(Rest, Fold2);
+        {abort, _Fold1} = Ret ->
+            Ret
+    end;
 fold(
   [#bin{} = Expr | Rest],
   Fold) ->
@@ -223,8 +254,13 @@ fold(
             ClausesEndCallback = fun(Clauses1, ClausesRest, ClausesFold) ->
                                          {FunctionExpr, ClausesFold1} = pop_expression(ClausesFold),
                                          FunctionExpr1 = FunctionExpr#'fun'{props = {clauses, Clauses1}},
-                                         ClausesFold2 = push_expression(FunctionExpr1, ClausesFold1),
-                                         fold(ClausesRest, ClausesFold2)
+                                         case post_callback(FunctionExpr1, ClausesFold1) of
+                                             {continue, FunctionExpr2, ClausesFold2} ->
+                                                 ClausesFold3 = push_expression(FunctionExpr2, ClausesFold2),
+                                                 fold(ClausesRest, ClausesFold3);
+                                             {abort, _ClausesFold2} = Ret ->
+                                                 Ret
+                                         end
                                  end,
             Fold2 = push_expression(Expr1, Fold1),
             fold_inner_exprs(Clauses, ClausesEndCallback, Rest, Fold2);
@@ -242,8 +278,13 @@ fold(
             ClausesEndCallback = fun(Clauses1, ClausesRest, ClausesFold) ->
                                          {FunctionExpr, ClausesFold1} = pop_expression(ClausesFold),
                                          FunctionExpr1 = FunctionExpr#function{clauses = Clauses1},
-                                         ClausesFold2 = push_expression(FunctionExpr1, ClausesFold1),
-                                         fold(ClausesRest, ClausesFold2)
+                                         case post_callback(FunctionExpr1, ClausesFold1) of
+                                             {continue, FunctionExpr2, ClausesFold2} ->
+                                                 ClausesFold3 = push_expression(FunctionExpr2, ClausesFold2),
+                                                 fold(ClausesRest, ClausesFold3);
+                                             {abort, _ClausesFold2} = Ret ->
+                                                 Ret
+                                         end
                                  end,
             Fold2 = push_expression(Expr1, Fold1),
             fold_inner_exprs(Clauses, ClausesEndCallback, Rest, Fold2);

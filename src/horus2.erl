@@ -12,6 +12,7 @@
 -include_lib("stdlib/include/assert.hrl").
 
 -include("src/horus_abscode_utils.hrl").
+-include("src/horus_fun.hrl").
 
 -export([to_standalone_fun/1]).
 
@@ -61,7 +62,7 @@ to_standalone_fun(Fun) ->
                                                     [Name | Acc]
                                             end, [], Vars),
                            UnboundVars2 = lists:sort(UnboundVars1),
-                           ArgsFromEnv = [#var{location = {0, 0},
+                           ArgsFromEnv = [#var{location = 0,
                                                name = UnboundVar}
                                           || UnboundVar <- UnboundVars2],
                            Args1 = Args ++ ArgsFromEnv,
@@ -84,47 +85,35 @@ to_standalone_fun(Fun) ->
     {ok, AC} = horus_abscode_utils:get(M, F, A),
     logger:alert("~s:~s/~b = ~p", [M, F, A, AC]),
 
-    {'fun', Location, {clauses, Clauses}} = AbstractCode1,
-    Code = [{attribute,
-             {1,1},
-             file,
-             {"/home/dumbbell/Documents/Dev/rabbitmq/horus/test/experiment.erl",
-              1}},
-            {attribute,{9,2},module,experiment},
-            {attribute,0,export,[{test,0},{bitstring_flags_test,0}]},
-            {attribute,
-             {1,1},
-             file,
-             {"/usr/local/lib/erlang28/lib/eunit-2.10.3/include/eunit.hrl",
-              1}},
-            {attribute,
-             {1,1},
-             file,
-             {"/usr/local/lib/erlang28/lib/stdlib-7.3/include/assert.hrl",
-              1}},
-            {attribute,
-             {88,1},
-             file,
-             {"/usr/local/lib/erlang28/lib/eunit-2.10.3/include/eunit.hrl",
-              88}},
-            {attribute,
-             {12,1},
-             file,
-             {"/home/dumbbell/Documents/Dev/rabbitmq/horus/test/experiment.erl",
-              12}},
-            {function,
-             Location,
-             bitstring_flags_test, Arity1, Clauses}],
+    [SourceFileAttr, #'fun'{location = Location, props = {clauses, Clauses}}] = AbstractCode1,
+
+    GeneratedModuleName = youpi,
+    Code = ([#attribute{location = 0, name = module, value = GeneratedModuleName},
+             #attribute{location = 0, name = export, value = [{run, Arity1}]},
+             SourceFileAttr,
+             #function{location = Location, name = run, arity = Arity1, clauses = Clauses}] ++
+            AC),
     logger:alert(
       "Generated module abstract code:~n  ~p~nAs Erlang source code:~n~ts",
       [Code, horus_abscode_utils:to_erlang_code(Code)]),
 
-    CompilerOptions = [binary,
-                       warnings_as_errors,
-                       return_errors,
-                       return_warnings,
-                       deterministic],
-    compile:forms(Code, CompilerOptions).
+    StandaloneFun = #horus_fun{
+                       module = GeneratedModuleName,
+                       beam = Code,
+                       arity = Arity,
+                       literal_funs = [],
+                       fun_name_mapping = #{{run, 4} => {a, b, 0},
+                                            {F, A} => {M, F, A}},
+                       env = Env},
+
+    % CompilerOptions = [binary,
+    %                    warnings_as_errors,
+    %                    return_errors,
+    %                    return_warnings,
+    %                    deterministic],
+    % compile:forms(Code, CompilerOptions).
+
+    {ok, StandaloneFun}.
 
 %     Info = maps:from_list(erlang:fun_info(Fun)),
 %     logger:alert("Info = ~p", [Info]),

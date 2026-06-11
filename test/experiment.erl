@@ -24,7 +24,7 @@ bitstring_flags_test() ->
                      <<-42:4/big-signed-integer-unit:8>>),
     BigUnsignedBin = helpers:ensure_not_optimized(
                        <<42:4/big-unsigned-integer-unit:8>>),
-    Fun = fun(_A) ->
+    Fun = fun() ->
                   {match_bitstring_flags(
                      {little_signed, LittleSignedBin}),
                    match_bitstring_flags(
@@ -36,7 +36,11 @@ bitstring_flags_test() ->
           end,
     % Ret = horus_beam_utils:get_fun_abstract_code(Fun),
     Ret = horus2:to_standalone_fun(Fun),
-    logger:alert("Fun = ~p", [Ret]).
+    logger:alert("Fun = ~p", [Ret]),
+    {ok, StandaloneFun} = Ret,
+    Ret1 = horus:exec(StandaloneFun, []),
+    logger:alert("Fun ret = ~p", [Ret1]),
+    Ret1.
 
 match_bitstring_flags(
   {little_signed, <<N:4/little-signed-integer-unit:8>>}) ->
