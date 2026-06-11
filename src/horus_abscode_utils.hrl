@@ -14,9 +14,10 @@
 -record(bin_element, {location, value, size, specifiers}).
 -record(call, {location, call, args}).
 -record(clause, {location, args, guards, body}).
+-record(clauses, {clauses}).
 -record(cons, {location, head, tail}).
 -record(eof, {location}).
--record('fun', {location, props}).
+-record('fun', {location, code}).
 -record(function, {location, name, arity, clauses}).
 -record(integer, {location, value}).
 -record(match, {location, left, right}).

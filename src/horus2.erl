@@ -85,7 +85,7 @@ to_standalone_fun(Fun) ->
     {ok, AC} = horus_abscode_utils:get(M, F, A),
     logger:alert("~s:~s/~b = ~p", [M, F, A, AC]),
 
-    [SourceFileAttr, #'fun'{location = Location, props = {clauses, Clauses}}] = AbstractCode1,
+    [SourceFileAttr, #'fun'{location = Location, code = #clauses{clauses = Clauses}}] = AbstractCode1,
 
     GeneratedModuleName = youpi,
     Code = ([#attribute{location = 0, name = module, value = GeneratedModuleName},

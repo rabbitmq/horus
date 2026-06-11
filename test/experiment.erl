@@ -35,12 +35,18 @@ bitstring_flags_test() ->
                      {big_unsigned, BigUnsignedBin})}
           end,
     % Ret = horus_beam_utils:get_fun_abstract_code(Fun),
-    Ret = horus2:to_standalone_fun(Fun),
-    logger:alert("Fun = ~p", [Ret]),
-    {ok, StandaloneFun} = Ret,
-    Ret1 = horus:exec(StandaloneFun, []),
-    logger:alert("Fun ret = ~p", [Ret1]),
-    Ret1.
+    try
+        Ret = horus2:to_standalone_fun(Fun),
+        logger:alert("Fun = ~p", [Ret]),
+        {ok, StandaloneFun} = Ret,
+        Ret1 = horus:exec(StandaloneFun, []),
+        logger:alert("Fun ret = ~p", [Ret1]),
+        Ret1
+    catch
+        C:R:S ->
+            logger:alert("~p:~p:~p", [C, R, S]),
+            erlang:raise(C, R, S)
+    end.
 
 match_bitstring_flags(
   {little_signed, <<N:4/little-signed-integer-unit:8>>}) ->
