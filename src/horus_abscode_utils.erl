@@ -12,34 +12,58 @@
 -include_lib("stdlib/include/assert.hrl").
 
 -include("src/horus_abscode_utils.hrl").
+-include("src/horus_error.hrl").
 
 -export([get/1,
-         fold/4,
+         fold/5,
          to_erlang_code/1]).
+-export([get_fold_depth/1,
+         get_vars/1]).
 
 -type vars_map() :: #{atom() => boolean()}.
 
-%% `fold/2' state.
+%% `fold/5' state.
 
 -record(fold, {matching = false :: boolean(),
                vars = #{} :: horus_abscode_utils:vars_map(),
+               depth = 1,
                output_exprs = [],
 
+               source,
                pre_callback :: fun(),
                post_callback :: fun(),
                priv :: any()}).
 
--type erlang_expression() :: #attribute{} |
+-opaque fold_state() :: #fold{}.
+
+-type erlang_expression() :: #atom{} |
+                             #attribute{} |
                              #bin{} |
                              #bin_element{} |
+                             #block{} |
                              #call{} |
+                             #'case'{} |
+                             #char{} |
                              #clause{} |
                              #clauses{} |
+                             #eof{} |
+                             #float{} |
                              #'fun'{} |
                              #function{} |
                              #integer{} |
+                             #map{} |
+                             #map_field_assoc{} |
+                             #map_field_exact{} |
                              #match{} |
-                             #op{} |
+                             #nil{} |
+                             {op, any(), any(), any()} |
+                             {op, any(), any(), any(), any()} |
+                             #'receive'{} |
+                             #record{} |
+                             #record_field{} |
+                             #remote{} |
+                             #string{} |
+                             #'try'{} |
                              #tuple{} |
                              #var{}.
 
@@ -64,6 +88,7 @@
 -type expression() :: erlang_expression() | internal_expression().
 
 -export_type([vars_map/0,
+              fold_state/0,
               erlang_expression/0,
               internal_expression/0,
               expression/0]).
@@ -71,24 +96,28 @@
 get(Fun) when is_function(Fun) ->
     FunInfo = horus_erlfun_utils:info(Fun),
     #{module := Module} = FunInfo,
+    %% FIXME: `StartLine' not enough. Use the first asm instruction and its
+    %% line number to determine which function on that same line is the best
+    %% match.
     StartLine = horus_asm_utils:get_fun_start_line(Fun),
     Beam = horus_beam_utils:get_beam(Module),
     AbstractCode = horus_beam_utils:get_abstract_code(Beam),
+    logger:alert("Module = ~p~nFunInfo = ~p~nStartLine = ~b", [AbstractCode, FunInfo, StartLine]),
     PreCallback = fun
                       (#attribute{name = file} = Expr,
-                       _Vars, Priv) ->
+                       _Fold, Priv) ->
                           Priv1 = Priv#{source_file => Expr},
                           {continue, Expr, Priv1};
                       (#'fun'{location = {StartLine1, _StartCol}} = Expr,
-                       _Vars, Priv)
+                       _Fold, Priv)
                         when not is_map_key(abstract_code, Priv) andalso
                              StartLine1 =:= StartLine ->
                           Priv1 = Priv#{abstract_code => Expr},
                           {abort, Priv1};
-                      (Expr, _Vars, Priv) ->
+                      (Expr, _Fold, Priv) ->
                           {continue, Expr, Priv}
                   end,
-    case fold(AbstractCode, PreCallback, none, #{}) of
+    case fold(AbstractCode, Fun, PreCallback, none, #{}) of
         {ok, _, #{source_file := SourceFile, abstract_code := AbstractCode1}} ->
             AbstractCode2 = [SourceFile, AbstractCode1],
             {ok, AbstractCode2};
@@ -96,26 +125,32 @@ get(Fun) when is_function(Fun) ->
             AbstractCode2 = [AbstractCode1],
             {ok, AbstractCode2};
         {ok, _, _Priv} ->
-            {error, not_found}
+            Reason = ?horus_error(
+                        fun_not_found,
+                        #{function => Fun,
+                          fun_info => FunInfo,
+                          start_line => StartLine,
+                          module_abstract_code => AbstractCode}),
+            {error, Reason}
     end;
-get({Module, Name, Arity}) ->
+get({Module, Name, Arity} = MFA) ->
     Beam = horus_beam_utils:get_beam(Module),
     AbstractCode = horus_beam_utils:get_abstract_code(Beam),
     PreCallback = fun
                       (#attribute{name = file} = Expr,
-                       _Vars, Priv) ->
+                       _Fold, Priv) ->
                           Priv1 = Priv#{source_file => Expr},
                           {continue, Expr, Priv1};
                       (#function{name = Name1, arity = Arity1} = Expr,
-                       _Vars, Priv)
+                       _Fold, Priv)
                         when not is_map_key(abstract_code, Priv) andalso
                              Name1 =:= Name andalso Arity1 =:= Arity ->
                           Priv1 = Priv#{abstract_code => Expr},
                           {abort, Priv1};
-                      (Expr, _Vars, Priv) ->
+                      (Expr, _Fold, Priv) ->
                           {skip, Expr, Priv}
                   end,
-    case fold(AbstractCode, PreCallback, none, #{}) of
+    case fold(AbstractCode, MFA, PreCallback, none, #{}) of
         {ok, _, #{source_file := SourceFile, abstract_code := AbstractCode1}} ->
             AbstractCode2 = [SourceFile, AbstractCode1],
             {ok, AbstractCode2};
@@ -123,11 +158,17 @@ get({Module, Name, Arity}) ->
             AbstractCode2 = [AbstractCode1],
             {ok, AbstractCode2};
         {ok, _, _Priv} ->
-            {error, not_found}
+            Reason = ?horus_error(
+                        fun_not_found,
+                        #{function => MFA,
+                          module_abstract_code => AbstractCode}),
+            {error, Reason}
     end.
 
-fold(AbstractCode, PreCallback, PostCallback, Priv) when is_list(AbstractCode) ->
-    Fold = #fold{pre_callback = PreCallback,
+fold(AbstractCode, Source, PreCallback, PostCallback, Priv)
+  when is_list(AbstractCode) ->
+    Fold = #fold{source = Source,
+                 pre_callback = PreCallback,
                  post_callback = PostCallback,
                  priv = Priv},
     case fold(AbstractCode, Fold) of
@@ -137,8 +178,8 @@ fold(AbstractCode, PreCallback, PostCallback, Priv) when is_list(AbstractCode) -
         {abort, #fold{priv = Priv1}} ->
             {ok, none, Priv1}
     end;
-fold(AbstractCode, PreCallback, PostCallback, Priv) ->
-    case fold([AbstractCode], PreCallback, PostCallback, Priv) of
+fold(AbstractCode, Source, PreCallback, PostCallback, Priv) ->
+    case fold([AbstractCode], Source, PreCallback, PostCallback, Priv) of
         {ok, [AbstractCode1], Priv1} ->
             {ok, AbstractCode1, Priv1};
         {ok, none, _Priv1} = Ret ->
@@ -147,7 +188,9 @@ fold(AbstractCode, PreCallback, PostCallback, Priv) ->
 
 fold([Expr | Rest], Fold)
   when is_record(Expr, atom) orelse
+       is_record(Expr, char) orelse
        is_record(Expr, eof) orelse
+       is_record(Expr, float) orelse
        is_record(Expr, integer) orelse
        is_record(Expr, nil) orelse
        is_record(Expr, string) ->
@@ -163,8 +206,20 @@ fold([#bin_element{} = Expr | Rest], Fold) ->
     InnerExprs = [#inner_exprs_start{index = #bin_element.value,
                                      matching = inherit}],
     handle_expr(Expr, InnerExprs, false, Rest, Fold);
+fold([#block{} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = #block.expressions,
+                                     matching = inherit}],
+    handle_expr(Expr, InnerExprs, false, Rest, Fold);
 fold([#call{} = Expr | Rest], Fold) ->
-    InnerExprs = [#inner_exprs_start{index = #call.args,
+    InnerExprs = [#inner_exprs_start{index = #call.call,
+                                     matching = false},
+                  #inner_exprs_start{index = #call.args,
+                                     matching = false}],
+    handle_expr(Expr, InnerExprs, true, Rest, Fold);
+fold([#'case'{} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = #'case'.input,
+                                     matching = false},
+                  #inner_exprs_start{index = #'case'.clauses,
                                      matching = false}],
     handle_expr(Expr, InnerExprs, true, Rest, Fold);
 fold([#clause{} = Expr | Rest], #fold{matching = false} = Fold) ->
@@ -192,15 +247,67 @@ fold([#function{} = Expr | Rest], Fold) ->
     InnerExprs = [#inner_exprs_start{index = #function.clauses,
                                      matching = false}],
     handle_expr(Expr, InnerExprs, true, Rest, Fold);
-fold([#match{} = Expr | Rest], #fold{matching = false} = Fold) ->
+fold([#map{} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = #map.elements,
+                                     matching = inherit}],
+    handle_expr(Expr, InnerExprs, false, Rest, Fold);
+fold([#map_field_assoc{} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = #map_field_assoc.key,
+                                     matching = false},
+                  #inner_exprs_start{index = #map_field_assoc.value,
+                                     matching = false}],
+    handle_expr(Expr, InnerExprs, false, Rest, Fold);
+fold([#map_field_exact{} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = #map_field_exact.key,
+                                     matching = false},
+                  #inner_exprs_start{index = #map_field_exact.value,
+                                     matching = inherit}],
+    handle_expr(Expr, InnerExprs, false, Rest, Fold);
+fold([#match{} = Expr | Rest], #fold{} = Fold) ->
     InnerExprs = [#inner_exprs_start{index = #match.left,
                                      matching = true},
                   #inner_exprs_start{index = #match.right,
                                      matching = false}],
     handle_expr(Expr, InnerExprs, false, Rest, Fold);
-fold([#op{} = Expr | Rest], Fold) ->
-    InnerExprs = [#inner_exprs_start{index = #op.value,
+fold([{op, _Location, _Operator, _Operand} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = 4,
                                      matching = inherit}],
+    handle_expr(Expr, InnerExprs, true, Rest, Fold);
+fold([{op, _Location, _Operator, _LeftOperand, _RightOperand} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = 4,
+                                     matching = false},
+                  #inner_exprs_start{index = 5,
+                                     matching = false}],
+    handle_expr(Expr, InnerExprs, true, Rest, Fold);
+fold([#'receive'{} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = #'receive'.clauses,
+                                     matching = false}],
+    handle_expr(Expr, InnerExprs, true, Rest, Fold);
+fold([#record{} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = #record.fields,
+                                     matching = inherit}],
+    handle_expr(Expr, InnerExprs, false, Rest, Fold);
+fold([#record_field{} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = #record_field.name,
+                                     matching = false},
+                  #inner_exprs_start{index = #record_field.value,
+                                     matching = inherit}],
+    handle_expr(Expr, InnerExprs, false, Rest, Fold);
+fold([#remote{} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = #remote.module,
+                                     matching = false},
+                  #inner_exprs_start{index = #remote.function,
+                                     matching = false}],
+    handle_expr(Expr, InnerExprs, true, Rest, Fold);
+fold([#'try'{} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = #'try'.block,
+                                     matching = false},
+                  #inner_exprs_start{index = #'try'.unnamed1,
+                                     matching = false},
+                  #inner_exprs_start{index = #'try'.'catch',
+                                     matching = false},
+                  #inner_exprs_start{index = #'try'.unnamed2,
+                                     matching = false}],
     handle_expr(Expr, InnerExprs, false, Rest, Fold);
 fold([#tuple{} = Expr | Rest], Fold) ->
     InnerExprs = [#inner_exprs_start{index = #tuple.elements,
@@ -218,14 +325,17 @@ fold(
 
 fold(
   [#inner_exprs_start{index = Index, matching = Matching} | Rest],
-  #fold{matching = OldMatching, output_exprs = [ParentExpr | _] = OutputExprs} = Fold) ->
+  #fold{matching = OldMatching,
+        depth = Depth,
+        output_exprs = [ParentExpr | _] = OutputExprs} = Fold) ->
     InnerExprs = element(Index, ParentExpr),
     IsList = is_list(InnerExprs),
     InnerExprsEnd = #inner_exprs_end{index = Index,
                                      is_list = IsList,
                                      old_matching = OldMatching,
                                      output_exprs = OutputExprs},
-    Fold1 = Fold#fold{output_exprs = []},
+    Fold1 = Fold#fold{depth = Depth + 1,
+                      output_exprs = []},
     Fold2 = set_matching(Matching, Fold1),
     case IsList of
         true  -> fold(InnerExprs ++ [InnerExprsEnd | Rest], Fold2);
@@ -236,7 +346,7 @@ fold(
                     is_list = IsList,
                     old_matching = OldMatching,
                     output_exprs = [ParentExpr | OutputExprs]} | Rest],
-  #fold{output_exprs = InnerExprs} = Fold) ->
+  #fold{depth = Depth, output_exprs = InnerExprs} = Fold) ->
     InnerExprs1 = case IsList of
                       true ->
                           lists:reverse(InnerExprs);
@@ -246,7 +356,8 @@ fold(
                   end,
     ParentExpr1 = setelement(Index, ParentExpr, InnerExprs1),
     OutputExprs1 = [ParentExpr1 | OutputExprs],
-    Fold1 = Fold#fold{output_exprs = OutputExprs1},
+    Fold1 = Fold#fold{depth = Depth - 1,
+                      output_exprs = OutputExprs1},
     Fold2 = set_matching(OldMatching, Fold1),
     fold(Rest, Fold2);
 fold(
@@ -266,6 +377,16 @@ fold(
             Ret
     end;
 
+fold(
+  [UnknownExpression | _Rest],
+  #fold{source = Source} = _Fold) ->
+    Source1 = case is_function(Source) of
+                  true  -> horus_erlfun_utils:info(Source);
+                  false -> Source
+              end,
+    erlang:error(
+      ?horus_exception(unknow_expression, #{expression => UnknownExpression,
+                                            source => Source1}));
 fold(
   [],
   Fold) ->
@@ -315,8 +436,8 @@ post_callback(Expr, #fold{post_callback = PostCallback} = Fold) ->
 
 run_callback(none, Expr, Fold) ->
     {continue, Expr, Fold};
-run_callback(Callback, Expr, #fold{vars = Vars, priv = Priv} = Fold) ->
-    case Callback(Expr, Vars, Priv) of
+run_callback(Callback, Expr, #fold{source = Source, priv = Priv} = Fold) ->
+    try Callback(Expr, Fold, Priv) of
         {Step, Priv1}
           when Step =:= continue orelse Step =:= skip orelse Step =:= abort ->
             Fold1 = Fold#fold{priv = Priv1},
@@ -325,7 +446,21 @@ run_callback(Callback, Expr, #fold{vars = Vars, priv = Priv} = Fold) ->
           when Step =:= continue orelse Step =:= skip ->
             Fold1 = Fold#fold{priv = Priv1},
             {Step, Expr1, Fold1}
+    catch
+        Class:Reason:Stacktrace ->
+            Source1 = case is_function(Source) of
+                          true  -> horus_erlfun_utils:info(Source);
+                          false -> Source
+                      end,
+            logger:alert("Source = ~0p", [Source1]),
+            erlang:raise(Class, Reason, Stacktrace)
     end.
+
+get_fold_depth(#fold{depth = Depth}) ->
+    Depth.
+
+get_vars(#fold{vars = Vars}) ->
+    Vars.
 
 to_erlang_code(AbstractCode) ->
     Form = erl_syntax:form_list(AbstractCode),

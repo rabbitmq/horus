@@ -41,6 +41,7 @@ get_beam(Module) ->
 get_abstract_code(Beam) when is_binary(Beam) ->
     case beam_lib:chunks(Beam, [abstract_code]) of
         {ok, {_Module, [{abstract_code, {raw_abstract_v1, AbstractCode}}]}} ->
+            % logger:alert("Module ~s abstract code: ~p", [_Module, AbstractCode]),
             AbstractCode;
         _ ->
             BeamInfo = beam_lib:info(Beam),

@@ -293,6 +293,7 @@ get_fun_start_line(Fun) ->
     Arity1 = Arity + length(Env),
     Beam = horus_beam_utils:get_beam(Module),
     Asm = disassemble(Beam),
+    logger:alert("Assembly = ~p~n", [Asm]),
     get_fun_start_line(Asm, Module, FunName, Arity1, Asm).
 
 get_fun_start_line(
