@@ -38,7 +38,8 @@ bitstring_flags_test() ->
     try
         Ret = horus2:to_standalone_fun(Fun),
         logger:alert("Fun = ~p", [Ret]),
-        {ok, StandaloneFun} = Ret,
+        % {ok, StandaloneFun} = Ret,
+        StandaloneFun = Ret,
         Ret1 = horus:exec(StandaloneFun, []),
         logger:alert("Fun ret = ~p", [Ret1]),
         Ret1

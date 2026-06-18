@@ -69,6 +69,7 @@ extract_function(Fun, #extraction{'fun' = EntryPoint} = Extraction)
                        false -> gen_function_name(Module, Name)
                    end,
     RealArity = Arity + length(Env),
+    logger:alert("Env = ~p~nArity = ~b -> ~b", [Env, Arity, RealArity]),
     FunExtract = #fun_extract{module = Module,
                               name = InternalName,
                               arity = RealArity,
@@ -87,7 +88,12 @@ do_extract_function(
                name = InternalName,
                arity = RealArity} = FunExtract,
   Extraction) ->
-    {ok, AbstractCode1} = horus_abscode_utils:get(Reference),
+    {AbstractCode1, PredefinedVars} = case horus_abscode_utils:get(Reference) of
+                                          {ok, AC} ->
+                                              {AC, undefined};
+                                          {ok, AC, PV} ->
+                                              {AC, PV}
+                                      end,
 
     %% Goals:
     %% 1. Is the expression allowed?
@@ -114,6 +120,7 @@ do_extract_function(
                                  _ when is_tuple(CallReference) andalso
                                         (element(1, CallReference) =:= maps orelse
                                          element(1, CallReference) =:= lists orelse
+                                         element(1, CallReference) =:= proplists orelse
                                          element(1, CallReference) =:= horus2) ->
                                      Extraction1;
                                  _ ->
@@ -137,7 +144,7 @@ do_extract_function(
                                code = #clauses{clauses = Clauses}} = Expr,
                         Fold,
                         Extraction1) ->
-                            case horus_abscode_utils:get_fold_depth(Fold) of
+                            case horus_abscode_utils:get_expr_depth(Fold) of
                                 1 ->
                                     Expr1 = #function{location = Location,
                                                       name = InternalName,
@@ -150,7 +157,7 @@ do_extract_function(
                         (#function{} = Expr, _Fold, Extraction1) ->
                             Expr1 = Expr#function{name = InternalName},
                             {continue, Expr1, Extraction1};
-                        (#clause{args = Args} = Expr, Fold, Extraction1) ->
+                        (#clause{args = Args, body = Body} = Expr, Fold, Extraction1) ->
                             Vars = horus_abscode_utils:get_vars(Fold),
                             UnboundVars1 = maps:fold(
                                              fun
@@ -159,12 +166,17 @@ do_extract_function(
                                                 (Name, false, Acc) ->
                                                      [Name | Acc]
                                              end, [], Vars),
-                            UnboundVars2 = lists:sort(UnboundVars1),
+                            UnboundVars2 = UnboundVars1 -- ['ApplyTo', 'List'],
+                            UnboundVars3 = lists:sort(UnboundVars2),
                             ArgsFromEnv = [#var{location = 0,
                                                 name = UnboundVar}
-                                           || UnboundVar <- UnboundVars2],
+                                           || UnboundVar <- UnboundVars3],
                             Args1 = Args ++ ArgsFromEnv,
-                            Expr1 = Expr#clause{args = Args1},
+                            Body1 = case PredefinedVars of
+                                        undefined -> Body;
+                                        _ -> PredefinedVars ++ Body
+                                    end,
+                            Expr1 = Expr#clause{args = Args1, body = Body1},
                             {continue, Expr1, Extraction1};
                        (#call{call = Call} = Expr, _Fold, Extraction1) ->
                             Expr1 = case Call of
@@ -177,6 +189,7 @@ do_extract_function(
                                         #remote{module = #atom{name = CalledModule}}
                                           when CalledModule =:= maps orelse
                                                CalledModule =:= lists orelse
+                                               CalledModule =:= proplists orelse
                                                CalledModule =:= horus2 ->
                                             Expr;
                                         #remote{location = Location,

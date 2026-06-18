@@ -17,7 +17,7 @@
 -export([get/1,
          fold/5,
          to_erlang_code/1]).
--export([get_fold_depth/1,
+-export([get_expr_depth/1,
          get_vars/1]).
 
 -type vars_map() :: #{atom() => boolean()}.
@@ -26,7 +26,7 @@
 
 -record(fold, {matching = false :: boolean(),
                vars = #{} :: horus_abscode_utils:vars_map(),
-               depth = 1,
+               expr_depth = 1,
                output_exprs = [],
 
                source,
@@ -99,28 +99,67 @@ get(Fun) when is_function(Fun) ->
     %% FIXME: `StartLine' not enough. Use the first asm instruction and its
     %% line number to determine which function on that same line is the best
     %% match.
-    StartLine = horus_asm_utils:get_fun_start_line(Fun),
+    {StartLine, FirstExprLine, _FirstInstruction} = horus_asm_utils:get_fun_start_lines(Fun),
     Beam = horus_beam_utils:get_beam(Module),
     AbstractCode = horus_beam_utils:get_abstract_code(Beam),
-    logger:alert("Module = ~p~nFunInfo = ~p~nStartLine = ~b", [AbstractCode, FunInfo, StartLine]),
+    % logger:alert("Module = ~p~nFunInfo = ~p~nStartLine = ~b~nFirstInstruction = ~0p @ ~b", [AbstractCode, FunInfo, StartLine, _FirstInstruction, FirstExprLine]),
+    %% FIXME: Collect all variables from args and in the function body from the start
+    %% of the function up to the definition of the `Fun' when they are
+    %% deterministic. Args in parent `fun()' overrides previous variables with
+    %% the same name.
+    %%
+    %% Use that to copy variable definitions to the beginning of the extracted
+    %% function.
     PreCallback = fun
                       (#attribute{name = file} = Expr,
                        _Fold, Priv) ->
                           Priv1 = Priv#{source_file => Expr},
                           {continue, Expr, Priv1};
-                      (#'fun'{location = {StartLine1, _StartCol}} = Expr,
-                       _Fold, Priv)
+                      (#'fun'{location = {StartLine1, _StartCol},
+                              code = #clauses{clauses = Clauses}} = Expr,
+                       _Fold, #{scopes := [Scope | _]} = Priv)
                         when not is_map_key(abstract_code, Priv) andalso
                              StartLine1 =:= StartLine ->
-                          Priv1 = Priv#{abstract_code => Expr},
-                          {abort, Priv1};
+                          FirstExpr = find_first_executable_expr(Clauses),
+                          % logger:alert("Firt executable expr = ~p", [FirstExpr]),
+                          case element(2, FirstExpr) of
+                              {FirstExprLine, _} ->
+                                  Scope1 = lists:reverse(Scope),
+                                  Priv1 = Priv#{abstract_code => Expr,
+                                                scope => Scope1},
+                                  {abort, Priv1};
+                              _ ->
+                                  {continue, Expr, Priv}
+                          end;
+                      (enter_scope = Expr, _Fold, #{scopes := Scopes} = Priv) ->
+                          Scopes1 = case Scopes of
+                                        []         -> [[]];
+                                        [Vars | _] -> [Vars | Scopes]
+                                    end,
+                          Priv1 = Priv#{scopes => Scopes1},
+                          {continue, Expr, Priv1};
                       (Expr, _Fold, Priv) ->
                           {continue, Expr, Priv}
                   end,
-    case fold(AbstractCode, Fun, PreCallback, none, #{}) of
-        {ok, _, #{source_file := SourceFile, abstract_code := AbstractCode1}} ->
+    PostCallback = fun
+                      (#match{left = #var{}} = Expr, _Fold, #{scopes := [CurrentScope | Scopes]} = Priv) ->
+                          CurrentScope1 = [Expr | CurrentScope],
+                          Priv1 = Priv#{scopes => [CurrentScope1 | Scopes]},
+                          {continue, Expr, Priv1};
+                      (#match{} = Expr, _Fold, Priv) ->
+                          {continue, Expr, Priv};
+                      (exit_scope = Expr, _Fold, #{scopes := Scopes} = Priv) ->
+                           Scopes1 = tl(Scopes),
+                           Priv1 = Priv#{scopes => Scopes1},
+                          {continue, Expr, Priv1};
+                       (Expr, _Fold, Priv) ->
+                           {continue, Expr, Priv}
+                   end,
+    case fold(AbstractCode, Fun, PreCallback, PostCallback, #{scopes => []}) of
+        {ok, _, #{source_file := SourceFile, abstract_code := AbstractCode1, scope := Scope}} ->
+            % logger:alert("Vars in scope for ~s: ~0p", [maps:get(name, FunInfo), Scope]),
             AbstractCode2 = [SourceFile, AbstractCode1],
-            {ok, AbstractCode2};
+            {ok, AbstractCode2, Scope};
         {ok, _, #{abstract_code := AbstractCode1}} ->
             AbstractCode2 = [AbstractCode1],
             {ok, AbstractCode2};
@@ -164,6 +203,37 @@ get({Module, Name, Arity} = MFA) ->
                           module_abstract_code => AbstractCode}),
             {error, Reason}
     end.
+
+find_first_executable_expr([Expr | _])
+  when is_record(Expr, atom) orelse
+       is_record(Expr, bin) orelse
+       is_record(Expr, call) orelse
+       is_record(Expr, char) orelse
+       is_record(Expr, cons) orelse
+       is_record(Expr, float) orelse
+       is_record(Expr, 'fun') orelse
+       is_record(Expr, integer) orelse
+       is_record(Expr, map) orelse
+       is_record(Expr, match) orelse
+       is_record(Expr, nil) orelse
+       element(1, Expr) =:= op orelse
+       is_record(Expr, record) orelse
+       is_record(Expr, string) orelse
+       is_record(Expr, tuple) orelse
+       is_record(Expr, var) ->
+    Expr;
+find_first_executable_expr([#block{expressions = Exprs} | _]) ->
+    find_first_executable_expr(Exprs);
+find_first_executable_expr([#clause{body = Body} | _]) ->
+    find_first_executable_expr(Body);
+find_first_executable_expr([#clauses{clauses = Clauses} | _]) ->
+    find_first_executable_expr(Clauses);
+find_first_executable_expr([#'if'{clauses = Clauses} | _]) ->
+    find_first_executable_expr(Clauses);
+find_first_executable_expr([#'receive'{clauses = Clauses} | _]) ->
+    find_first_executable_expr(Clauses);
+find_first_executable_expr([#'try'{block = Block} | _]) ->
+    find_first_executable_expr(Block).
 
 fold(AbstractCode, Source, PreCallback, PostCallback, Priv)
   when is_list(AbstractCode) ->
@@ -227,8 +297,7 @@ fold([#clause{} = Expr | Rest], #fold{matching = false} = Fold) ->
                                      matching = true},
                   #inner_exprs_start{index = #clause.body,
                                      matching = false}],
-    {Rest1, Fold1} = enter_scope(Rest, Fold),
-    handle_expr(Expr, InnerExprs, true, Rest1, Fold1);
+    enter_scope(Expr, InnerExprs, true, Rest, Fold);
 fold([#clauses{} = Expr | Rest], Fold) ->
     InnerExprs = [#inner_exprs_start{index = #clauses.clauses,
                                      matching = false}],
@@ -247,6 +316,10 @@ fold([#function{} = Expr | Rest], Fold) ->
     InnerExprs = [#inner_exprs_start{index = #function.clauses,
                                      matching = false}],
     handle_expr(Expr, InnerExprs, true, Rest, Fold);
+fold([#'if'{} = Expr | Rest], Fold) ->
+    InnerExprs = [#inner_exprs_start{index = #'if'.clauses,
+                                     matching = false}],
+    handle_expr(Expr, InnerExprs, false, Rest, Fold);
 fold([#map{} = Expr | Rest], Fold) ->
     InnerExprs = [#inner_exprs_start{index = #map.elements,
                                      matching = inherit}],
@@ -268,7 +341,7 @@ fold([#match{} = Expr | Rest], #fold{} = Fold) ->
                                      matching = true},
                   #inner_exprs_start{index = #match.right,
                                      matching = false}],
-    handle_expr(Expr, InnerExprs, false, Rest, Fold);
+    handle_expr(Expr, InnerExprs, true, Rest, Fold);
 fold([{op, _Location, _Operator, _Operand} = Expr | Rest], Fold) ->
     InnerExprs = [#inner_exprs_start{index = 4,
                                      matching = inherit}],
@@ -326,7 +399,7 @@ fold(
 fold(
   [#inner_exprs_start{index = Index, matching = Matching} | Rest],
   #fold{matching = OldMatching,
-        depth = Depth,
+        expr_depth = ExprDepth,
         output_exprs = [ParentExpr | _] = OutputExprs} = Fold) ->
     InnerExprs = element(Index, ParentExpr),
     IsList = is_list(InnerExprs),
@@ -334,7 +407,7 @@ fold(
                                      is_list = IsList,
                                      old_matching = OldMatching,
                                      output_exprs = OutputExprs},
-    Fold1 = Fold#fold{depth = Depth + 1,
+    Fold1 = Fold#fold{expr_depth = ExprDepth + 1,
                       output_exprs = []},
     Fold2 = set_matching(Matching, Fold1),
     case IsList of
@@ -346,7 +419,7 @@ fold(
                     is_list = IsList,
                     old_matching = OldMatching,
                     output_exprs = [ParentExpr | OutputExprs]} | Rest],
-  #fold{depth = Depth, output_exprs = InnerExprs} = Fold) ->
+  #fold{expr_depth = ExprDepth, output_exprs = InnerExprs} = Fold) ->
     InnerExprs1 = case IsList of
                       true ->
                           lists:reverse(InnerExprs);
@@ -356,15 +429,14 @@ fold(
                   end,
     ParentExpr1 = setelement(Index, ParentExpr, InnerExprs1),
     OutputExprs1 = [ParentExpr1 | OutputExprs],
-    Fold1 = Fold#fold{depth = Depth - 1,
+    Fold1 = Fold#fold{expr_depth = ExprDepth - 1,
                       output_exprs = OutputExprs1},
     Fold2 = set_matching(OldMatching, Fold1),
     fold(Rest, Fold2);
 fold(
-  [#scope_exit{vars = Vars} | Rest],
+  [#scope_exit{} = Expr | Rest],
   Fold) ->
-    Fold1 = Fold#fold{vars = Vars},
-    fold(Rest, Fold1);
+    exit_scope(Expr, Rest, Fold);
 fold(
   [post_callback | Rest],
   #fold{output_exprs = [Expr | OutputExprs]} = Fold) ->
@@ -418,10 +490,28 @@ set_matching(Matching, Fold) when is_boolean(Matching) ->
     Fold1 = Fold#fold{matching = Matching},
     Fold1.
 
-enter_scope(Rest, #fold{vars = Vars} = Fold) ->
+enter_scope(Expr, InnerExprs, UseCallbacks, Rest, #fold{vars = Vars} = Fold) ->
+    % logger:alert("ENTER SCOPE, Expr = ~p", [Expr]),
     ExitScope = #scope_exit{vars = Vars},
     Rest1 = [ExitScope | Rest],
-    {Rest1, Fold}.
+    case pre_callback(enter_scope, Fold) of
+        {Step, enter_scope, Fold1}
+          when Step =:= continue orelse Step =:= skip ->
+            handle_expr(Expr, InnerExprs, UseCallbacks, Rest1, Fold1);
+        {abort, _Fold1} = Ret ->
+            Ret
+    end.
+
+exit_scope(#scope_exit{vars = Vars}, Rest, Fold) ->
+    % logger:alert("EXIT SCOPE, Rest = ~p", [hd(Rest)]),
+    Fold1 = Fold#fold{vars = Vars},
+    case post_callback(exit_scope, Fold1) of
+        {Step, exit_scope, Fold2}
+          when Step =:= continue orelse Step =:= skip ->
+            fold(Rest, Fold2);
+        {abort, _Fold2} = Ret ->
+            Ret
+    end.
 
 push_expression(Expression, #fold{output_exprs = OutputExprs} = Fold) ->
     OutputExprs1 = [Expression | OutputExprs],
@@ -456,8 +546,8 @@ run_callback(Callback, Expr, #fold{source = Source, priv = Priv} = Fold) ->
             erlang:raise(Class, Reason, Stacktrace)
     end.
 
-get_fold_depth(#fold{depth = Depth}) ->
-    Depth.
+get_expr_depth(#fold{expr_depth = ExprDepth}) ->
+    ExprDepth.
 
 get_vars(#fold{vars = Vars}) ->
     Vars.

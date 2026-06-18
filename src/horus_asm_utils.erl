@@ -14,7 +14,7 @@
 -include("src/horus_error.hrl").
 
 -export([disassemble/1,
-         get_fun_start_line/1]).
+         get_fun_start_lines/1]).
 
 -type beam_instr() :: atom() | tuple().
 
@@ -280,11 +280,13 @@ do_unpack_varint(I, Size, <<Byte:8/unsigned-integer, Rest/binary>>, Res)
 do_unpack_varint(I, I = _Size, <<>> = _Rest, Res) ->
     Res.
 
--spec get_fun_start_line(Fun) -> StartLine when
+-spec get_fun_start_lines(Fun) -> {StartLine, FirstExprLine, FirstInstruction} when
       Fun :: fun(),
-      StartLine :: pos_integer().
+      StartLine :: pos_integer(),
+      FirstExprLine :: pos_integer(),
+      FirstInstruction :: any().
 
-get_fun_start_line(Fun) ->
+get_fun_start_lines(Fun) ->
     FunInfo = horus_erlfun_utils:info(Fun),
     #{module := Module,
       name := FunName,
@@ -293,40 +295,44 @@ get_fun_start_line(Fun) ->
     Arity1 = Arity + length(Env),
     Beam = horus_beam_utils:get_beam(Module),
     Asm = disassemble(Beam),
-    logger:alert("Assembly = ~p~n", [Asm]),
-    get_fun_start_line(Asm, Module, FunName, Arity1, Asm).
+    logger:alert("Assembly = ~p", [Asm]),
+    get_fun_start_lines(Asm, Module, FunName, Arity1, Asm).
 
-get_fun_start_line(
+get_fun_start_lines(
   [{function, FunName, Arity, _EntryLabel} | Rest],
   Module, FunName, Arity, Asm) ->
     case Rest of
-        [{line, Args} | _] ->
-            case lists:keyfind(location, 1, Args) of
-                {location, _FileName, Line} ->
-                    Line;
+        [{line, Args1} | Rest1] ->
+            StartLine = get_line_number_from_line_instr_args(Args1),
+            {FirstExprLine, FirstInstruction} = find_first_executable_expr_line(Rest1),
+            case is_integer(StartLine) andalso is_integer(FirstExprLine) of
+                true ->
+                    {StartLine, FirstExprLine, FirstInstruction};
                 false ->
                     ?horus_misuse(
-                       failed_to_determine_fun_start_line,
+                       failed_to_determine_fun_start_lines,
                        #{module => Module,
                          fun_name => FunName,
                          arity => Arity,
                          reason => no_location_info_in_line_instruction,
-                         asm => Asm})
+                         asm => Asm,
+                         rest => Rest})
             end;
         _ ->
             ?horus_misuse(
-               failed_to_determine_fun_start_line,
+               failed_to_determine_fun_start_lines,
                #{module => Module,
                  fun_name => FunName,
                  arity => Arity,
-                 reason => no_line_instruction_following_function_start,
-                 asm => Asm})
+                 reason => no_line_instructions_following_function_start,
+                 asm => Asm,
+                 rest => Rest})
     end;
-get_fun_start_line(
+get_fun_start_lines(
   [_Instruction | Rest],
   Module, FunName, Arity, Asm) ->
-    get_fun_start_line(Rest, Module, FunName, Arity, Asm);
-get_fun_start_line(
+    get_fun_start_lines(Rest, Module, FunName, Arity, Asm);
+get_fun_start_lines(
   [],
   Module, FunName, Arity, Asm) ->
     ?horus_misuse(
@@ -336,3 +342,33 @@ get_fun_start_line(
          arity => Arity,
          reason => function_not_found,
          asm => Asm}).
+
+find_first_executable_expr_line(Instructions) ->
+    find_first_executable_expr_line(Instructions, undefined).
+
+find_first_executable_expr_line(
+  [{line, Args}, Instruction | Rest], FirstInstruction) ->
+    Line = get_line_number_from_line_instr_args(Args),
+    FirstInstruction1 = case FirstInstruction of
+                            undefined ->
+                                {Line, Instruction};
+                            {FirstExprLine, _} when FirstExprLine > Line ->
+                                {Line, Instruction};
+                            _ ->
+                                FirstInstruction
+                        end,
+    find_first_executable_expr_line(Rest, FirstInstruction1);
+find_first_executable_expr_line([{function, _, _, _} | _Rest], FirstInstruction) ->
+    FirstInstruction;
+find_first_executable_expr_line([_ | Rest], FirstInstruction) ->
+    find_first_executable_expr_line(Rest, FirstInstruction);
+find_first_executable_expr_line([], FirstInstruction) ->
+    FirstInstruction.
+
+get_line_number_from_line_instr_args(Args) ->
+    case lists:keyfind(location, 1, Args) of
+        {location, _FileName, Line} ->
+            Line;
+        false ->
+            undefined
+    end.

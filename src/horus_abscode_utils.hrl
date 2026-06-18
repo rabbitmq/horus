@@ -23,6 +23,7 @@
 -record(float, {location, value}).
 -record('fun', {location, code}).
 -record(function, {location, name, arity, clauses}).
+-record('if', {location, clauses}).
 -record(integer, {location, value}).
 -record(map, {location, elements}).
 -record(map_field_assoc, {location, key, value}).
