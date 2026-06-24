@@ -17,24 +17,40 @@
 -export([get/1,
          fold/5,
          to_erlang_code/1]).
--export([get_expr_depth/1,
-         get_vars/1]).
+-export([is_matching/1,
+         get_expr_depth/1]).
 
 -type vars_map() :: #{atom() => boolean()}.
 
 %% `fold/5' state.
 
--record(fold, {matching = false :: boolean(),
-               vars = #{} :: horus_abscode_utils:vars_map(),
+-record(fold, {source,
                expr_depth = 1,
                output_exprs = [],
+               matching = false :: boolean(),
+               % vars = #{} :: horus_abscode_utils:vars_map(),
 
-               source,
                pre_callback :: fun(),
                post_callback :: fun(),
                priv :: any()}).
 
 -opaque fold_state() :: #fold{}.
+
+-record(getfun, {source = undefined,
+                 fun_info,
+                 decl_line,
+                 first_exec_line,
+                 first_exec_instr,
+
+                 possible_target_funs = [],
+                 is_target_fun = false,
+
+                 predefined_vars = []
+                }).
+
+-record(fun_context, {expr,
+                      depth,
+                      referenced_vars = []}).
 
 -type erlang_expression() :: #atom{} |
                              #attribute{} |
@@ -96,81 +112,30 @@
 get(Fun) when is_function(Fun) ->
     FunInfo = horus_erlfun_utils:info(Fun),
     #{module := Module} = FunInfo,
-    %% FIXME: `StartLine' not enough. Use the first asm instruction and its
-    %% line number to determine which function on that same line is the best
-    %% match.
-    {StartLine, FirstExprLine, _FirstInstruction} = horus_asm_utils:get_fun_start_lines(Fun),
+    {StartLine,
+     FirstExecLine,
+     FirstInstruction} = horus_asm_utils:get_fun_start_lines(Fun),
     Beam = horus_beam_utils:get_beam(Module),
     AbstractCode = horus_beam_utils:get_abstract_code(Beam),
-    % logger:alert("Module = ~p~nFunInfo = ~p~nStartLine = ~b~nFirstInstruction = ~0p @ ~b", [AbstractCode, FunInfo, StartLine, _FirstInstruction, FirstExprLine]),
-    %% FIXME: Collect all variables from args and in the function body from the start
-    %% of the function up to the definition of the `Fun' when they are
-    %% deterministic. Args in parent `fun()' overrides previous variables with
-    %% the same name.
+    %% Get:
+    %% 1. keep all match expressions to locate variables defined outside of a function:
+    %%      * left hand side: does it have variables?
+    %%      * righ hand side: does it only have literals and variables?
+    %% 2. locate all referenced variables in the function:
+    %% 3. list all referenced but undefined variables
+    %% 4. for each retained match expression that defines undefined variables:
+    %%      a. rename other unused variables to `_'
+    %% 5. add patched match expressions at the beginning of the clause body
+    %% 6. add undefined variables left to args, sorted alphabetically
     %%
-    %% Use that to copy variable definitions to the beginning of the extracted
-    %% function.
-    PreCallback = fun
-                      (#attribute{name = file} = Expr,
-                       _Fold, Priv) ->
-                          Priv1 = Priv#{source_file => Expr},
-                          {continue, Expr, Priv1};
-                      (#'fun'{location = {StartLine1, _StartCol},
-                              code = #clauses{clauses = Clauses}} = Expr,
-                       _Fold, #{scopes := [Scope | _]} = Priv)
-                        when not is_map_key(abstract_code, Priv) andalso
-                             StartLine1 =:= StartLine ->
-                          FirstExpr = find_first_executable_expr(Clauses),
-                          % logger:alert("Firt executable expr = ~p", [FirstExpr]),
-                          case element(2, FirstExpr) of
-                              {FirstExprLine, _} ->
-                                  Scope1 = lists:reverse(Scope),
-                                  Priv1 = Priv#{abstract_code => Expr,
-                                                scope => Scope1},
-                                  {abort, Priv1};
-                              _ ->
-                                  {continue, Expr, Priv}
-                          end;
-                      (enter_scope = Expr, _Fold, #{scopes := Scopes} = Priv) ->
-                          Scopes1 = case Scopes of
-                                        []         -> [[]];
-                                        [Vars | _] -> [Vars | Scopes]
-                                    end,
-                          Priv1 = Priv#{scopes => Scopes1},
-                          {continue, Expr, Priv1};
-                      (Expr, _Fold, Priv) ->
-                          {continue, Expr, Priv}
-                  end,
-    PostCallback = fun
-                      (#match{left = #var{}} = Expr, _Fold, #{scopes := [CurrentScope | Scopes]} = Priv) ->
-                          CurrentScope1 = [Expr | CurrentScope],
-                          Priv1 = Priv#{scopes => [CurrentScope1 | Scopes]},
-                          {continue, Expr, Priv1};
-                      (#match{} = Expr, _Fold, Priv) ->
-                          {continue, Expr, Priv};
-                      (exit_scope = Expr, _Fold, #{scopes := Scopes} = Priv) ->
-                           Scopes1 = tl(Scopes),
-                           Priv1 = Priv#{scopes => Scopes1},
-                          {continue, Expr, Priv1};
-                       (Expr, _Fold, Priv) ->
-                           {continue, Expr, Priv}
-                   end,
-    case fold(AbstractCode, Fun, PreCallback, PostCallback, #{scopes => []}) of
-        {ok, _, #{source_file := SourceFile, abstract_code := AbstractCode1, scope := Scope}} ->
-            % logger:alert("Vars in scope for ~s: ~0p", [maps:get(name, FunInfo), Scope]),
-            AbstractCode2 = [SourceFile, AbstractCode1],
-            {ok, AbstractCode2, Scope};
-        {ok, _, #{abstract_code := AbstractCode1}} ->
-            AbstractCode2 = [AbstractCode1],
-            {ok, AbstractCode2};
-        {ok, _, _Priv} ->
-            Reason = ?horus_error(
-                        fun_not_found,
-                        #{function => Fun,
-                          fun_info => FunInfo,
-                          start_line => StartLine,
-                          module_abstract_code => AbstractCode}),
-            {error, Reason}
+    %% Caveat: can a literal-based variable still be passed in the environment?
+    GF = #getfun{fun_info = FunInfo,
+                 decl_line = StartLine,
+                 first_exec_line = FirstExecLine,
+                 first_exec_instr = FirstInstruction},
+    case fold(AbstractCode, Fun, fun pre_get/3, fun post_get/3, GF) of
+        {ok, _, FunAbstractCode} ->
+            {ok, FunAbstractCode}
     end;
 get({Module, Name, Arity} = MFA) ->
     Beam = horus_beam_utils:get_beam(Module),
@@ -204,7 +169,74 @@ get({Module, Name, Arity} = MFA) ->
             {error, Reason}
     end.
 
-find_first_executable_expr([Expr | _])
+pre_get(
+  #attribute{name = file} = Expr,
+  _Fold,
+  Priv) ->
+    Priv1 = Priv#getfun{source = Expr},
+    {continue, Priv1};
+pre_get(
+  #'fun'{location = {StartLine, _StartCol}} = Expr,
+  Fold,
+  #getfun{decl_line = StartLine,
+          possible_target_funs = PossibleTargetFuns} = Priv) ->
+    FunDepth = get_expr_depth(Fold),
+    FunContext = #fun_context{expr = Expr,
+                              depth = FunDepth},
+    PossibleTargetFuns1 = [FunContext | PossibleTargetFuns],
+    Priv1 = Priv#getfun{possible_target_funs = PossibleTargetFuns1},
+    {continue, Priv1};
+pre_get(
+  #clause{},
+  Fold,
+  #getfun{possible_target_funs = [FunContext | OuterFunContexts]} = Priv) ->
+    #fun_context{depth = FunDepth,
+                 referenced_vars = RefdVarsPerClause} = FunContext,
+    ClauseDepth = get_expr_depth(Fold),
+    case ClauseDepth =:= FunDepth + 2 of
+        true ->
+            RefdVarsPerClause1 = [#{} | RefdVarsPerClause],
+            FunContext1 = FunContext#fun_context{referenced_vars = RefdVarsPerClause1},
+            Priv1 = Priv#getfun{possible_target_funs = [FunContext1 | OuterFunContexts]},
+            {continue, Priv1};
+        false ->
+            {continue, Priv}
+    end;
+pre_get(
+  enter_scope,
+  _Fold,
+  #getfun{predefined_vars = OuterScopes} = Priv) ->
+    NewScope = case OuterScopes of
+                   []                 -> [];
+                   [CurrentScope | _] -> CurrentScope
+               end,
+    OuterScopes1 = [NewScope | OuterScopes],
+    Priv1 = Priv#getfun{predefined_vars = OuterScopes1},
+    {continue, Priv1};
+pre_get(
+  #var{name = Name},
+  Fold,
+  #getfun{possible_target_funs = [FunContext | OuterFunContexts]} = Priv) ->
+    Matching = is_matching(Fold),
+    % logger:alert("Var ~s, matching = ~s", [Name, Matching]),
+    #fun_context{referenced_vars = [RefdVars | RefdVarsPerClause]} = FunContext,
+    RefdVars1 = case RefdVars of
+                    #{Name := _} -> RefdVars;
+                    _            -> RefdVars#{Name => Matching}
+                end,
+    RefdVarsPerClause1 = [RefdVars1 | RefdVarsPerClause],
+    FunContext1 = FunContext#fun_context{referenced_vars = RefdVarsPerClause1},
+    Priv1 = Priv#getfun{possible_target_funs = [FunContext1 | OuterFunContexts]},
+    {continue, Priv1};
+pre_get(Expr, _Fold, Priv) ->
+    Priv1 = handle_first_executable_expr(Expr, Priv),
+    {continue, Priv1}.
+
+handle_first_executable_expr(
+  Expr,
+  #getfun{first_exec_line = FirstExecLine,
+          possible_target_funs = [_ | _],
+          is_target_fun = false} = Priv)
   when is_record(Expr, atom) orelse
        is_record(Expr, bin) orelse
        is_record(Expr, call) orelse
@@ -221,19 +253,320 @@ find_first_executable_expr([Expr | _])
        is_record(Expr, string) orelse
        is_record(Expr, tuple) orelse
        is_record(Expr, var) ->
-    Expr;
-find_first_executable_expr([#block{expressions = Exprs} | _]) ->
-    find_first_executable_expr(Exprs);
-find_first_executable_expr([#clause{body = Body} | _]) ->
-    find_first_executable_expr(Body);
-find_first_executable_expr([#clauses{clauses = Clauses} | _]) ->
-    find_first_executable_expr(Clauses);
-find_first_executable_expr([#'if'{clauses = Clauses} | _]) ->
-    find_first_executable_expr(Clauses);
-find_first_executable_expr([#'receive'{clauses = Clauses} | _]) ->
-    find_first_executable_expr(Clauses);
-find_first_executable_expr([#'try'{block = Block} | _]) ->
-    find_first_executable_expr(Block).
+    ExecLine = element(2, Expr),
+    % logger:alert("Expr = ~s @ ~0p~nFirstExecLine = ~b", [element(1, Expr), ExecLine, FirstExecLine]),
+    case ExecLine of
+        {FirstExecLine, _} ->
+            Priv1 = Priv#getfun{is_target_fun = true},
+            Priv1;
+        _ ->
+            Priv
+    end;
+handle_first_executable_expr(_Expr, Priv) ->
+    % logger:alert("Expr not executable = ~p", [_Expr]),
+    Priv.
+
+post_get(
+  #'fun'{} = Expr,
+  _Fold,
+  #getfun{source = Source,
+          fun_info = FunInfo,
+          possible_target_funs = [FunContext | OuterFunContexts],
+          is_target_fun = IsTargetFun,
+          predefined_vars = [CurrentScope | _]} = Priv) ->
+    case IsTargetFun of
+        true ->
+            #fun_context{referenced_vars = RefdVarsPerClause} = FunContext,
+            RefdVarsPerClause1 = lists:reverse(RefdVarsPerClause),
+            %% Leave `CurrentScope' in reversed order for upcoming handling of
+            %% unbound variables.
+            Expr1 = patch_anonymous_function(
+                      Expr, FunInfo, RefdVarsPerClause1, CurrentScope),
+            {abort, [Source, Expr1]};
+        false ->
+            Priv1 = Priv#getfun{possible_target_funs = OuterFunContexts},
+            {continue, Priv1}
+    end;
+post_get(
+  #match{} = Expr,
+  _Fold,
+  #getfun{predefined_vars = [CurrentScope | OuterScopes]} = Priv) ->
+    CurrentScope1 = [Expr | CurrentScope],
+    Priv1 = Priv#getfun{predefined_vars = [CurrentScope1 | OuterScopes]},
+    {continue, Priv1};
+post_get(
+  exit_scope,
+  _Fold,
+  #getfun{predefined_vars = [_CurrentScope | OuterScopes]} = Priv) ->
+    Priv1 = Priv#getfun{predefined_vars = OuterScopes},
+    {continue, Priv1};
+post_get(_Expr, _Fold, Priv) ->
+    {continue, Priv}.
+
+patch_anonymous_function(
+  #'fun'{code = #clauses{clauses = Clauses}} = Expr,
+  FunInfo, RefdVarsPerClause, PredefinedVars) ->
+    patch_anonymous_function_clauses(
+      Expr, FunInfo, Clauses, RefdVarsPerClause, PredefinedVars, []).
+
+patch_anonymous_function_clauses(
+  Expr, #{env := Env} = FunInfo,
+  [#clause{args = Args, body = Body} = Clause | ClausesRest],
+  [RefdVars | RefdVarsRest],
+  PredefinedVars, PatchedClauses) ->
+    UnboundVars1 = maps:fold(
+                     fun
+                         (_Name, true, Acc) -> Acc;
+                         (Name, false, Acc) -> [Name | Acc]
+                     end, [], RefdVars),
+    logger:alert("Unbound variables 1: ~1p", [UnboundVars1]),
+    {VarsInitExprs,
+     UnboundVars2} = take_unbound_vars_from_predefined_vars(
+                       RefdVars, UnboundVars1, PredefinedVars),
+    logger:alert("Unbound variables 2: ~1p", [UnboundVars2]),
+
+    UnboundVars3 = lists:reverse(lists:sort(UnboundVars2)),
+    ?assertEqual(length(Env), length(UnboundVars3)),
+    ArgsFromEnv = [#var{location = 0, name = Name} || Name <- UnboundVars3],
+    Args1 = Args ++ ArgsFromEnv,
+    Body1 = VarsInitExprs ++ Body,
+    Clause1 = Clause#clause{args = Args1, body = Body1},
+    PatchedClauses1 = [Clause1 | PatchedClauses],
+    patch_anonymous_function_clauses(
+      Expr, FunInfo, RefdVarsRest, ClausesRest, PredefinedVars,
+      PatchedClauses1);
+patch_anonymous_function_clauses(
+  Expr, _FunInfo, [], [], _PredefinedVars, PatchedClauses) ->
+    PatchedClauses1 = lists:reverse(PatchedClauses),
+    Expr1 = Expr#'fun'{code = #clauses{clauses = PatchedClauses1}},
+    Expr1.
+
+take_unbound_vars_from_predefined_vars(RefdVars, UnboundVars, PredefinedVars) ->
+    take_unbound_vars_from_predefined_vars(
+      RefdVars, UnboundVars, PredefinedVars, []).
+
+take_unbound_vars_from_predefined_vars(
+  _RefdVars, UnboundVars, PredefinedVars, VarsInitExprs)
+  when UnboundVars =:= [] orelse PredefinedVars =:= [] ->
+    {VarsInitExprs, UnboundVars};
+take_unbound_vars_from_predefined_vars(
+  RefdVars, UnboundVars,
+  [#match{left = Left, right = Right} = Expr | Rest],
+  VarsInitExprs) ->
+    %% TODO: Var1 = Var2 = Expr
+    Source = undefined, % XXX
+    LeftPreCallback = none,
+    LeftPostCallback = fun
+                           (#var{name = Name} = Var, _Fold, {Allowed, UV1}) ->
+                               case lists:member(Name, UV1) of
+                                   true ->
+                                       UV2 = UV1 -- [Name],
+                                       {continue, {Allowed, UV2}};
+                                   false ->
+                                       case maps:is_key(Name, RefdVars) of
+                                           true ->
+                                               {continue, {Allowed, UV1}};
+                                           false ->
+                                               Var1 = Var#var{name = '_'},
+                                               {continue, Var1, {Allowed, UV1}}
+                                       end
+                               end;
+                           (_Expr, _Fold, Acc) ->
+                               {continue, Acc}
+                       end,
+    {ok, Left1, {LeftAllowed, UnboundVars1}} = fold(
+                                                 Left, Source,
+                                                 LeftPreCallback, LeftPostCallback,
+                                                 {true, UnboundVars}),
+    RightPreCallback = fun
+                           (#var{name = Name}, _Fold, {Allowed, UV1}) ->
+                               case lists:member(Name, UV1) of
+                                   true ->
+                                       {continue, {Allowed, UV1}};
+                                   false ->
+                                       UV2 = [Name | UV1],
+                                       {continue, {Allowed, UV2}}
+                               end;
+                           (E, _Fold, Acc)
+                             when is_record(E, atom) orelse
+                                  is_record(E, char) orelse
+                                  is_record(E, eof) orelse
+                                  is_record(E, float) orelse
+                                  is_record(E, integer) orelse
+                                  is_record(E, nil) orelse
+                                  is_record(E, string) orelse
+                                  is_record(E, var) ->
+                               {continue, Acc};
+                           (_Expr, _Fold, {_Allowed, UV1}) ->
+                               {continue, {false, UV1}}
+                       end,
+    RightPostCallback = none,
+    {ok, Right1, {RightAllowed, UnboundVars2}} = fold(
+                                                   Right, Source,
+                                                   RightPreCallback, RightPostCallback,
+                                                   {true, UnboundVars1}),
+    case LeftAllowed andalso RightAllowed of
+        true ->
+            case UnboundVars2 of
+                UnboundVars ->
+                    take_unbound_vars_from_predefined_vars(
+                      RefdVars, UnboundVars, Rest, VarsInitExprs);
+                _ ->
+                    Expr1 = Expr#match{left = Left1, right = Right1},
+                    VarsInitExprs1 = [Expr1 | VarsInitExprs],
+                    take_unbound_vars_from_predefined_vars(
+                      RefdVars, UnboundVars2, Rest, VarsInitExprs1)
+            end;
+        false ->
+            take_unbound_vars_from_predefined_vars(
+              RefdVars, UnboundVars, Rest, VarsInitExprs)
+    end.
+
+% get(Fun) when is_function(Fun) ->
+%     FunInfo = horus_erlfun_utils:info(Fun),
+%     #{module := Module} = FunInfo,
+%     %% FIXME: `StartLine' not enough. Use the first asm instruction and its
+%     %% line number to determine which function on that same line is the best
+%     %% match.
+%     {StartLine, FirstExprLine, _FirstInstruction} = horus_asm_utils:get_fun_start_lines(Fun),
+%     Beam = horus_beam_utils:get_beam(Module),
+%     AbstractCode = horus_beam_utils:get_abstract_code(Beam),
+%     % logger:alert("Module = ~p~nFunInfo = ~p~nStartLine = ~b~nFirstInstruction = ~0p @ ~b", [AbstractCode, FunInfo, StartLine, _FirstInstruction, FirstExprLine]),
+%     %% Get:
+%     %% 1. keep all match expressions to locate variables defined outside of a function:
+%     %%    * left hand side: does it have variables?
+%     %%    * righ hand side: does it only have literals and variables?
+%     %% 2. locate all referenced variables in the function:
+%     %%    * 
+%     %% 3. k
+%     PreCallback = fun
+%                       (#attribute{name = file} = Expr,
+%                        _Fold, Priv) ->
+%                           Priv1 = Priv#{source_file => Expr},
+%                           {continue, Expr, Priv1};
+%                       (#'fun'{location = {StartLine1, _StartCol},
+%                               code = #clauses{clauses = Clauses}} = Expr,
+%                        _Fold, #{scopes := [Scope | _]} = Priv)
+%                         when not is_map_key(abstract_code, Priv) andalso
+%                              StartLine1 =:= StartLine ->
+%                           FirstExpr = find_first_executable_expr(Clauses),
+%                           % logger:alert("Firt executable expr = ~p", [FirstExpr]),
+%                           case element(2, FirstExpr) of
+%                               {FirstExprLine, _} ->
+%                                   Scope1 = lists:reverse(Scope),
+%                                   Priv1 = Priv#{abstract_code => Expr,
+%                                                 scope => Scope1},
+%                                   {abort, Priv1};
+%                               _ ->
+%                                   {continue, Expr, Priv}
+%                           end;
+%                       (#var{name = Name} = Expr,
+%                        Fold,
+%                        #getfun{referenced_vars = RefdVars} = Priv) ->
+%                           Matching = is_matching(Fold),
+%                           RefdVars1 = case RefdVars of
+%                                       #{Name := _} -> RefdVars;
+%                                       _            -> RefdVars#{Name => Matching}
+%                                   end,
+%                           Priv1 = Priv#getfun{referenced_vars = RefdVars1},
+%                           {continue, Expr, Priv1};
+%                       (enter_scope = Expr, _Fold, #{scopes := Scopes} = Priv) ->
+%                           Scopes1 = case Scopes of
+%                                         []         -> [[]];
+%                                         [Vars | _] -> [Vars | Scopes]
+%                                     end,
+%                           Priv1 = Priv#{scopes => Scopes1},
+%                           {continue, Expr, Priv1};
+%                       (Expr, _Fold, Priv) ->
+%                           {continue, Expr, Priv}
+%                   end,
+%     PostCallback = fun
+%                       (#match{} = Expr, _Fold, #{scopes := [CurrentScope | Scopes]} = Priv) ->
+%                           CurrentScope1 = [Expr | CurrentScope],
+%                           Priv1 = Priv#{scopes => [CurrentScope1 | Scopes]},
+%                           {continue, Expr, Priv1};
+%                       (exit_scope = Expr, _Fold, #{scopes := Scopes} = Priv) ->
+%                            Scopes1 = tl(Scopes),
+%                            Priv1 = Priv#{scopes => Scopes1},
+%                           {continue, Expr, Priv1};
+%                        (Expr, _Fold, Priv) ->
+%                            {continue, Expr, Priv}
+%                    end,
+%     case fold(AbstractCode, Fun, PreCallback, PostCallback, #{scopes => []}) of
+%         {ok, _, #{abstract_code := AbstractCode1}} ->
+%             AbstractCode2 = [AbstractCode1],
+%             {ok, AbstractCode2};
+%         {ok, _, _Priv} ->
+%             Reason = ?horus_error(
+%                         fun_not_found,
+%                         #{function => Fun,
+%                           fun_info => FunInfo,
+%                           start_line => StartLine,
+%                           module_abstract_code => AbstractCode}),
+%             {error, Reason}
+%     end;
+% get({Module, Name, Arity} = MFA) ->
+%     Beam = horus_beam_utils:get_beam(Module),
+%     AbstractCode = horus_beam_utils:get_abstract_code(Beam),
+%     PreCallback = fun
+%                       (#attribute{name = file} = Expr,
+%                        _Fold, Priv) ->
+%                           Priv1 = Priv#{source_file => Expr},
+%                           {continue, Expr, Priv1};
+%                       (#function{name = Name1, arity = Arity1} = Expr,
+%                        _Fold, Priv)
+%                         when not is_map_key(abstract_code, Priv) andalso
+%                              Name1 =:= Name andalso Arity1 =:= Arity ->
+%                           Priv1 = Priv#{abstract_code => Expr},
+%                           {abort, Priv1};
+%                       (Expr, _Fold, Priv) ->
+%                           {skip, Expr, Priv}
+%                   end,
+%     case fold(AbstractCode, MFA, PreCallback, none, #{}) of
+%         {ok, _, #{source_file := SourceFile, abstract_code := AbstractCode1}} ->
+%             AbstractCode2 = [SourceFile, AbstractCode1],
+%             {ok, AbstractCode2};
+%         {ok, _, #{abstract_code := AbstractCode1}} ->
+%             AbstractCode2 = [AbstractCode1],
+%             {ok, AbstractCode2};
+%         {ok, _, _Priv} ->
+%             Reason = ?horus_error(
+%                         fun_not_found,
+%                         #{function => MFA,
+%                           module_abstract_code => AbstractCode}),
+%             {error, Reason}
+%     end.
+%
+% find_first_executable_expr([Expr | _])
+%   when is_record(Expr, atom) orelse
+%        is_record(Expr, bin) orelse
+%        is_record(Expr, call) orelse
+%        is_record(Expr, char) orelse
+%        is_record(Expr, cons) orelse
+%        is_record(Expr, float) orelse
+%        is_record(Expr, 'fun') orelse
+%        is_record(Expr, integer) orelse
+%        is_record(Expr, map) orelse
+%        is_record(Expr, match) orelse
+%        is_record(Expr, nil) orelse
+%        element(1, Expr) =:= op orelse
+%        is_record(Expr, record) orelse
+%        is_record(Expr, string) orelse
+%        is_record(Expr, tuple) orelse
+%        is_record(Expr, var) ->
+%     Expr;
+% find_first_executable_expr([#block{expressions = Exprs} | _]) ->
+%     find_first_executable_expr(Exprs);
+% find_first_executable_expr([#clause{body = Body} | _]) ->
+%     find_first_executable_expr(Body);
+% find_first_executable_expr([#clauses{clauses = Clauses} | _]) ->
+%     find_first_executable_expr(Clauses);
+% find_first_executable_expr([#'if'{clauses = Clauses} | _]) ->
+%     find_first_executable_expr(Clauses);
+% find_first_executable_expr([#'receive'{clauses = Clauses} | _]) ->
+%     find_first_executable_expr(Clauses);
+% find_first_executable_expr([#'try'{block = Block} | _]) ->
+%     find_first_executable_expr(Block).
 
 fold(AbstractCode, Source, PreCallback, PostCallback, Priv)
   when is_list(AbstractCode) ->
@@ -263,8 +596,9 @@ fold([Expr | Rest], Fold)
        is_record(Expr, float) orelse
        is_record(Expr, integer) orelse
        is_record(Expr, nil) orelse
-       is_record(Expr, string) ->
-    handle_expr(Expr, [], false, Rest, Fold);
+       is_record(Expr, string) orelse
+       is_record(Expr, var) ->
+    handle_expr(Expr, [], true, Rest, Fold);
 fold([Expr | Rest], Fold)
   when is_record(Expr, attribute) ->
     handle_expr(Expr, [], true, Rest, Fold);
@@ -386,15 +720,15 @@ fold([#tuple{} = Expr | Rest], Fold) ->
     InnerExprs = [#inner_exprs_start{index = #tuple.elements,
                                      matching = inherit}],
     handle_expr(Expr, InnerExprs, false, Rest, Fold);
-fold(
-  [#var{name = Name} = Expr | Rest],
-  #fold{matching = Matching, vars = Vars} = Fold) ->
-    Vars1 = case Vars of
-                #{Name := _} -> Vars;
-                _            -> Vars#{Name => Matching}
-            end,
-    Fold1 = Fold#fold{vars = Vars1},
-    handle_expr(Expr, [], false, Rest, Fold1);
+% fold(
+%   [#var{name = Name} = Expr | Rest],
+%   #fold{matching = Matching, vars = Vars} = Fold) ->
+%     Vars1 = case Vars of
+%                 #{Name := _} -> Vars;
+%                 _            -> Vars#{Name => Matching}
+%             end,
+%     Fold1 = Fold#fold{vars = Vars1},
+%     handle_expr(Expr, [], false, Rest, Fold1);
 
 fold(
   [#inner_exprs_start{index = Index, matching = Matching} | Rest],
@@ -441,6 +775,10 @@ fold(
   [post_callback | Rest],
   #fold{output_exprs = [Expr | OutputExprs]} = Fold) ->
     case post_callback(Expr, Fold) of
+        {Step, Fold1} when Step =:= continue orelse Step =:= skip ->
+            OutputExprs1 = [Expr | OutputExprs],
+            Fold2 = Fold1#fold{output_exprs = OutputExprs1},
+            fold(Rest, Fold2);
         {Step, Expr1, Fold1} when Step =:= continue orelse Step =:= skip ->
             OutputExprs1 = [Expr1 | OutputExprs],
             Fold2 = Fold1#fold{output_exprs = OutputExprs1},
@@ -467,8 +805,12 @@ fold(
 handle_expr(Expr, InnerExprIdxs, true = _UseCallbacks, Rest, Fold) ->
     Rest1 = [post_callback | Rest],
     case pre_callback(Expr, Fold) of
+        {continue, Fold1} ->
+            do_handle_expr(Expr, InnerExprIdxs, Rest1, Fold1);
         {continue, Expr1, Fold1} ->
             do_handle_expr(Expr1, InnerExprIdxs, Rest1, Fold1);
+        {skip, Fold1} ->
+            do_handle_expr(Expr, [], Rest1, Fold1);
         {skip, Expr1, Fold1} ->
             do_handle_expr(Expr1, [], Rest1, Fold1);
         {abort, _Fold1} = Ret ->
@@ -490,11 +832,16 @@ set_matching(Matching, Fold) when is_boolean(Matching) ->
     Fold1 = Fold#fold{matching = Matching},
     Fold1.
 
-enter_scope(Expr, InnerExprs, UseCallbacks, Rest, #fold{vars = Vars} = Fold) ->
+% enter_scope(Expr, InnerExprs, UseCallbacks, Rest, #fold{vars = Vars} = Fold) ->
+enter_scope(Expr, InnerExprs, UseCallbacks, Rest, #fold{} = Fold) ->
     % logger:alert("ENTER SCOPE, Expr = ~p", [Expr]),
-    ExitScope = #scope_exit{vars = Vars},
+    % ExitScope = #scope_exit{vars = Vars},
+    ExitScope = #scope_exit{},
     Rest1 = [ExitScope | Rest],
     case pre_callback(enter_scope, Fold) of
+        {Step, Fold1}
+          when Step =:= continue orelse Step =:= skip ->
+            handle_expr(Expr, InnerExprs, UseCallbacks, Rest1, Fold1);
         {Step, enter_scope, Fold1}
           when Step =:= continue orelse Step =:= skip ->
             handle_expr(Expr, InnerExprs, UseCallbacks, Rest1, Fold1);
@@ -502,14 +849,26 @@ enter_scope(Expr, InnerExprs, UseCallbacks, Rest, #fold{vars = Vars} = Fold) ->
             Ret
     end.
 
-exit_scope(#scope_exit{vars = Vars}, Rest, Fold) ->
+% exit_scope(#scope_exit{vars = Vars}, Rest, Fold) ->
+%     % logger:alert("EXIT SCOPE, Rest = ~p", [hd(Rest)]),
+%     Fold1 = Fold#fold{vars = Vars},
+%     case post_callback(exit_scope, Fold1) of
+%         {Step, exit_scope, Fold2}
+%           when Step =:= continue orelse Step =:= skip ->
+%             fold(Rest, Fold2);
+%         {abort, _Fold2} = Ret ->
+%             Ret
+%     end.
+exit_scope(#scope_exit{}, Rest, Fold) ->
     % logger:alert("EXIT SCOPE, Rest = ~p", [hd(Rest)]),
-    Fold1 = Fold#fold{vars = Vars},
-    case post_callback(exit_scope, Fold1) of
-        {Step, exit_scope, Fold2}
+    case post_callback(exit_scope, Fold) of
+        {Step, Fold1}
           when Step =:= continue orelse Step =:= skip ->
-            fold(Rest, Fold2);
-        {abort, _Fold2} = Ret ->
+            fold(Rest, Fold1);
+        {Step, exit_scope, Fold1}
+          when Step =:= continue orelse Step =:= skip ->
+            fold(Rest, Fold1);
+        {abort, _Fold1} = Ret ->
             Ret
     end.
 
@@ -546,11 +905,14 @@ run_callback(Callback, Expr, #fold{source = Source, priv = Priv} = Fold) ->
             erlang:raise(Class, Reason, Stacktrace)
     end.
 
+is_matching(#fold{matching = Matching}) ->
+    Matching.
+
 get_expr_depth(#fold{expr_depth = ExprDepth}) ->
     ExprDepth.
 
-get_vars(#fold{vars = Vars}) ->
-    Vars.
+% get_vars(#fold{vars = Vars}) ->
+%     Vars.
 
 to_erlang_code(AbstractCode) ->
     Form = erl_syntax:form_list(AbstractCode),

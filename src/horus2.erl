@@ -88,12 +88,9 @@ do_extract_function(
                name = InternalName,
                arity = RealArity} = FunExtract,
   Extraction) ->
-    {AbstractCode1, PredefinedVars} = case horus_abscode_utils:get(Reference) of
-                                          {ok, AC} ->
-                                              {AC, undefined};
-                                          {ok, AC, PV} ->
-                                              {AC, PV}
-                                      end,
+    {ok, AbstractCode1} = horus_abscode_utils:get(Reference),
+    logger:alert("Abstract code (~s:~s/~b): ~p", [ThisModule, InternalName, RealArity, AbstractCode1]),
+    % throw(pouet),
 
     %% Goals:
     %% 1. Is the expression allowed?
@@ -121,7 +118,8 @@ do_extract_function(
                                         (element(1, CallReference) =:= maps orelse
                                          element(1, CallReference) =:= lists orelse
                                          element(1, CallReference) =:= proplists orelse
-                                         element(1, CallReference) =:= horus2) ->
+                                         element(1, CallReference) =:= horus2 orelse
+                                         element(1, CallReference) =:= helpers) ->
                                      Extraction1;
                                  _ ->
                                      Functions1 = Functions#{
@@ -140,10 +138,10 @@ do_extract_function(
     %% 1. Add missing arguments for `fun()' taking arguments from their
     %%    environment.
     PostCallback1 = fun
-                       (#'fun'{location = Location,
-                               code = #clauses{clauses = Clauses}} = Expr,
-                        Fold,
-                        Extraction1) ->
+                        (#'fun'{location = Location,
+                                code = #clauses{clauses = Clauses}} = Expr,
+                         Fold,
+                         Extraction1) ->
                             case horus_abscode_utils:get_expr_depth(Fold) of
                                 1 ->
                                     Expr1 = #function{location = Location,
@@ -157,28 +155,7 @@ do_extract_function(
                         (#function{} = Expr, _Fold, Extraction1) ->
                             Expr1 = Expr#function{name = InternalName},
                             {continue, Expr1, Extraction1};
-                        (#clause{args = Args, body = Body} = Expr, Fold, Extraction1) ->
-                            Vars = horus_abscode_utils:get_vars(Fold),
-                            UnboundVars1 = maps:fold(
-                                             fun
-                                                 (_Name, true, Acc) ->
-                                                     Acc;
-                                                (Name, false, Acc) ->
-                                                     [Name | Acc]
-                                             end, [], Vars),
-                            UnboundVars2 = UnboundVars1 -- ['ApplyTo', 'List'],
-                            UnboundVars3 = lists:sort(UnboundVars2),
-                            ArgsFromEnv = [#var{location = 0,
-                                                name = UnboundVar}
-                                           || UnboundVar <- UnboundVars3],
-                            Args1 = Args ++ ArgsFromEnv,
-                            Body1 = case PredefinedVars of
-                                        undefined -> Body;
-                                        _ -> PredefinedVars ++ Body
-                                    end,
-                            Expr1 = Expr#clause{args = Args1, body = Body1},
-                            {continue, Expr1, Extraction1};
-                       (#call{call = Call} = Expr, _Fold, Extraction1) ->
+                        (#call{call = Call} = Expr, _Fold, Extraction1) ->
                             Expr1 = case Call of
                                         #atom{name = LocalFunName} ->
                                             LocalFunName1 = gen_function_name(
@@ -190,7 +167,8 @@ do_extract_function(
                                           when CalledModule =:= maps orelse
                                                CalledModule =:= lists orelse
                                                CalledModule =:= proplists orelse
-                                               CalledModule =:= horus2 ->
+                                               CalledModule =:= horus2 orelse
+                                               CalledModule =:= helpers ->
                                             Expr;
                                         #remote{location = Location,
                                                 module = #atom{name = CalledModule},
@@ -217,6 +195,24 @@ do_extract_function(
     Functions1 = Functions#{Reference => FunExtract1},
     Extraction3 = Extraction2#extraction{functions = Functions1},
     Extraction3.
+
+% handle_unbound_vars(#clause{args = Args, body = Body} = Expr, Fold) ->
+%     Vars = horus_abscode_utils:get_vars(Fold),
+%     PredefinedVars = horus_abscode_utils:get_scope(Fold),
+%     UnboundVars1 = maps:fold(
+%                      fun
+%                          (_Name, true, Acc) -> Acc;
+%                          (Name, false, Acc) -> [Name | Acc]
+%                      end, [], Vars),
+%     UnboundVars2 = UnboundVars1 -- ['ApplyTo', 'List'],
+%     UnboundVars3 = lists:sort(UnboundVars2),
+%     ArgsFromEnv = [#var{location = 0,
+%                         name = UnboundVar}
+%                    || UnboundVar <- UnboundVars3],
+%     Args1 = Args ++ ArgsFromEnv,
+%     Body1 = PredefinedVars ++ Body,
+%     Expr1 = Expr#clause{args = Args1, body = Body1},
+%     Expr1.
 
 create_standanole_fun(
   #extraction{'fun' = Fun, functions = Functions} = Extraction) ->

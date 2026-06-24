@@ -15,32 +15,32 @@
 % -dialyzer([{no_match,
 %             [matches_type/2,
 %              trim_leading_dash3/2]}]).
-
+%
 % concat_binaries_test() ->
 %     Bin = helpers:ensure_not_optimized(<<"a">>),
 %     StandaloneFun = ?make_standalone_fun(
 %                        <<Bin/binary, "_", Bin/binary, "_", Bin/binary>>),
 %     ?assertStandaloneFun(StandaloneFun),
 %     ?assertEqual(<<"a_a_a">>, horus:exec(StandaloneFun, [])).
-
-bs_match_test() ->
-    ApplyTo = <<"queues">>,
-    List = [{'apply-to', ApplyTo}],
-    StandaloneFun = ?make_standalone_fun(
-                       begin
-                           matches_type(
-                             queue, proplists:get_value('apply-to', List)),
-                           ok
-                       end),
-    ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
-
-matches_type(exchange, <<"exchanges">>) -> true;
-matches_type(queue,    <<"queues">>)    -> true;
-matches_type(exchange, <<"all">>)       -> true;
-matches_type(queue,    <<"all">>)       -> true;
-matches_type(_,        _)               -> false.
-
+%
+% bs_match_test() ->
+%     ApplyTo = <<"queues">>,
+%     List = [{'apply-to', ApplyTo}],
+%     StandaloneFun = ?make_standalone_fun(
+%                        begin
+%                            matches_type(
+%                              queue, proplists:get_value('apply-to', List)),
+%                            ok
+%                        end),
+%     ?assertStandaloneFun(StandaloneFun),
+%     ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+%
+% matches_type(exchange, <<"exchanges">>) -> true;
+% matches_type(queue,    <<"queues">>)    -> true;
+% matches_type(exchange, <<"all">>)       -> true;
+% matches_type(queue,    <<"all">>)       -> true;
+% matches_type(_,        _)               -> false.
+%
 % bitstring_init_test() ->
 %     StandaloneFun = ?make_standalone_fun(
 %                        begin
@@ -166,31 +166,31 @@ matches_type(_,        _)               -> false.
 %
 % match_float(<<Float/float>>) ->
 %     Float.
-%
-% type_inference_for_test_arity_instruction_test() ->
-%     self() ! {text, false},
-%     TextFrame = receive TextMsg -> TextMsg end,
-%     self() ! {binary, true},
-%     BinaryFrame = receive BinaryMsg -> BinaryMsg end,
-%     StandaloneFun = ?make_standalone_fun(
-%                        begin
-%                            <<0:1>> = encode_frame(TextFrame),
-%                            <<1:1>> = encode_frame(BinaryFrame),
-%                            ok
-%                        end),
-%     ?assertStandaloneFun(StandaloneFun),
-%     ?assertEqual(ok, horus:exec(StandaloneFun, [])).
-%
-% encode_frame(Frame)
-%     when is_tuple(Frame) andalso
-%         (element(1, Frame) =:= text orelse
-%          element(1, Frame) =:= binary) ->
-%     <<(encode_fin(Frame))/bitstring>>.
-%
-% encode_fin({text, false})   -> <<0:1/integer>>;
-% encode_fin({binary, false}) -> <<0:1/integer>>;
-% encode_fin(_)               -> <<1:1/integer>>.
-%
+
+type_inference_for_test_arity_instruction_test() ->
+    self() ! {text, false},
+    TextFrame = receive TextMsg -> TextMsg end,
+    self() ! {binary, true},
+    BinaryFrame = receive BinaryMsg -> BinaryMsg end,
+    StandaloneFun = ?make_standalone_fun(
+                       begin
+                           <<0:1>> = encode_frame(TextFrame),
+                           <<1:1>> = encode_frame(BinaryFrame),
+                           ok
+                       end),
+    ?assertStandaloneFun(StandaloneFun),
+    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+
+encode_frame(Frame)
+    when is_tuple(Frame) andalso
+        (element(1, Frame) =:= text orelse
+         element(1, Frame) =:= binary) ->
+    <<(encode_fin(Frame))/bitstring>>.
+
+encode_fin({text, false})   -> <<0:1/integer>>;
+encode_fin({binary, false}) -> <<0:1/integer>>;
+encode_fin(_)               -> <<1:1/integer>>.
+
 % bit_string_comprehension_expression_test() ->
 %     Data = crypto:strong_rand_bytes(128),
 %     <<Mask:32/integer>> = crypto:strong_rand_bytes(4),
