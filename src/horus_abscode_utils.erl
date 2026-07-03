@@ -11,6 +11,8 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
+-include_lib("compiler/src/core_parse.hrl").
+
 -include("src/horus_abscode_utils.hrl").
 -include("src/horus_error.hrl").
 
@@ -117,6 +119,28 @@ get(Fun) when is_function(Fun) ->
      FirstInstruction} = horus_asm_utils:get_fun_start_lines(Fun),
     Beam = horus_beam_utils:get_beam(Module),
     AbstractCode = horus_beam_utils:get_abstract_code(Beam),
+
+    % XXX
+    % 1. Walk both sides of a `#match{}' to associate a defined variable with an expression.
+    % 2. Compile abstract code to Core Erlang.
+    % 3. Use the location of the expression to find the internal name of the variable.
+    % 4. Associate the original variable name to the internal one.
+    % 5. Sort variables using their internal names.
+    % 6. Use the sorted list of variables to prepare the argument names from the environment.
+    CompilerOptions = [binary,
+                       to_core,
+                       warnings_as_errors,
+                       return_errors,
+                       return_warnings,
+                       deterministic],
+    {ok, _, CE, _} = compile:forms(AbstractCode, CompilerOptions),
+    % logger:alert("%% Abstract Format~n~p.~n", [AbstractCode]),
+    % logger:alert("%% Core Erlang~n~p.~n", [CE]),
+    {ok, CE1, _Priv1} = horus_cerl_utils:fold(CE, none, none, undefined),
+    logger:alert("%% Patched Core Erlang~n~p~n", [CE1]),
+    ?assertEqual(CE, CE1),
+    throw(pouet),
+
     %% Get:
     %% 1. keep all match expressions to locate variables defined outside of a function:
     %%      * left hand side: does it have variables?
@@ -325,6 +349,26 @@ patch_anonymous_function_clauses(
                        RefdVars, UnboundVars1, PredefinedVars),
     logger:alert("Unbound variables 2: ~1p", [UnboundVars2]),
 
+    %% Environment variable order:
+    %% 1. Variables may be renamed in Core Erlang to avoid collision with
+    %%    variables defined outside of the anonymous function.
+    %% 2. Renamed variables are sorted using an `ordsets'.
+    %%
+    %% TODO: How to determine their renamed variant? Can we access the renaming
+    %% table?
+    %%
+    %% 1. Eval the pattern matching in the `#match{}' to locate variables
+    %%    defined by an expression that is not a literal and not another
+    %%    variable.
+    %% 2. For each variable in this case, retain its RHS expression.
+    %% 3. For each RHS expression, take its location (line + column) and locate
+    %%    its corresponding `c_let'+`c_var' in the Core Erlang.
+    %% 4. Take the new internal name of that variable.
+    %%
+    %% We end up with `(VarName, RenamedVarName, Expression}'.
+    %%
+    %% TODO: How to determine if variables are inlined or passed as arguments
+    %% in the environment?
     UnboundVars3 = lists:reverse(lists:sort(UnboundVars2)),
     ?assertEqual(length(Env), length(UnboundVars3)),
     ArgsFromEnv = [#var{location = 0, name = Name} || Name <- UnboundVars3],

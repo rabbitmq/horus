@@ -167,11 +167,26 @@
 % match_float(<<Float/float>>) ->
 %     Float.
 
-type_inference_for_test_arity_instruction_test() ->
+% type_inference_for_test_arity_instruction_test() ->
+%     self() ! {text, false},
+%     TextFrame = receive TextMsg -> TextMsg end,
+%     self() ! {binary, true},
+%     BinaryFrame = receive BinaryMsg -> BinaryMsg end,
+%     StandaloneFun = ?make_standalone_fun(
+%                        begin
+%                            <<0:1>> = encode_frame(TextFrame),
+%                            <<1:1>> = encode_frame(BinaryFrame),
+%                            ok
+%                        end),
+%     ?assertStandaloneFun(StandaloneFun),
+%     ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+
+type_inference_for_test_arity_instruction2_test() ->
     self() ! {text, false},
-    TextFrame = receive TextMsg -> TextMsg end,
+    {Self, TextFrame} = {make_ref(), receive TextMsg -> TextMsg end},
     self() ! {binary, true},
     BinaryFrame = receive BinaryMsg -> BinaryMsg end,
+    % BinaryFrame = '_4',
     StandaloneFun = ?make_standalone_fun(
                        begin
                            <<0:1>> = encode_frame(TextFrame),
@@ -179,7 +194,23 @@ type_inference_for_test_arity_instruction_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, horus:exec(StandaloneFun, [])),
+    Self.
+
+% type_inference_for_test_arity_instruction3_test() ->
+%     self() ! {text, false},
+%     TextFrame = receive TextMsg -> TextMsg end,
+%     self() ! {binary, true},
+%     BinaryFrame = receive BinaryMsg -> BinaryMsg end,
+%     StandaloneFun = ?make_standalone_fun(
+%                        begin
+%                            <<0:1>> = encode_frame(TextFrame),
+%                            <<1:1>> = encode_frame(BinaryFrame),
+%                            ok
+%                        end),
+%     ?assertStandaloneFun(StandaloneFun),
+%     ?assertEqual(ok, horus:exec(StandaloneFun, [])),
+%     {TextFrame, BinaryFrame}.
 
 encode_frame(Frame)
     when is_tuple(Frame) andalso
