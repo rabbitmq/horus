@@ -187,6 +187,7 @@ type_inference_for_test_arity_instruction2_test() ->
     self() ! {binary, true},
     BinaryFrame = receive BinaryMsg -> BinaryMsg end,
     % BinaryFrame = '_4',
+    F = fun(D) -> {ok, D} end,
     StandaloneFun = ?make_standalone_fun(
                        begin
                            <<0:1>> = encode_frame(TextFrame),
@@ -195,7 +196,7 @@ type_inference_for_test_arity_instruction2_test() ->
                        end),
     ?assertStandaloneFun(StandaloneFun),
     ?assertEqual(ok, horus:exec(StandaloneFun, [])),
-    Self.
+    {Self, F}.
 
 % type_inference_for_test_arity_instruction3_test() ->
 %     self() ! {text, false},

@@ -767,13 +767,17 @@ should_generate_module_info_functions(#state{options = Options}) ->
       Beam :: binary().
 
 compile(Asm) when is_tuple(Asm) ->
-    CompilerOptions = [from_asm,
-                       binary,
-                       warnings_as_errors,
-                       return_errors,
-                       return_warnings,
-                       deterministic],
-    case compile:forms(Asm, CompilerOptions) of
+    CompilerOptions1 = [binary,
+                        return_errors,
+                        return_warnings,
+                        deterministic],
+    CompilerOptions2 = case cerl:is_c_module(Asm) of
+                           true ->
+                               [from_core | CompilerOptions1];
+                           false ->
+                               [from_asm, warnings_as_errors | CompilerOptions1]
+                       end,
+    case compile:forms(Asm, CompilerOptions2) of
         {ok, _Module, Beam, []} -> Beam;
         Error                   -> handle_compilation_error(Asm, Error)
     end;

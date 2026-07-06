@@ -137,7 +137,7 @@ get(Fun) when is_function(Fun) ->
     % logger:alert("%% Abstract Format~n~p.~n", [AbstractCode]),
     % logger:alert("%% Core Erlang~n~p.~n", [CE]),
     {ok, CE1, _Priv1} = horus_cerl_utils:fold(CE, none, none, undefined),
-    logger:alert("%% Patched Core Erlang~n~p~n", [CE1]),
+    % logger:alert("%% Patched Core Erlang~n~p~n", [CE1]),
     ?assertEqual(CE, CE1),
     throw(pouet),
 

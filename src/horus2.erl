@@ -90,7 +90,6 @@ do_extract_function(
   Extraction) ->
     {ok, AbstractCode1} = horus_abscode_utils:get(Reference),
     logger:alert("Abstract code (~s:~s/~b): ~p", [ThisModule, InternalName, RealArity, AbstractCode1]),
-    % throw(pouet),
 
     %% Goals:
     %% 1. Is the expression allowed?
