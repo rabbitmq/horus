@@ -615,7 +615,11 @@ get_inner_nodes_sets_of_c_try(Node) ->
     Body = cerl:try_body(Node),
     ExceptionVars = cerl:try_evars(Node),
     Handler = cerl:try_handler(Node),
-    InnerNodesSets = [[Argument], Vars, [Body], ExceptionVars, [Handler]],
+    InnerNodesSets = [[{matching, false}, Argument],
+                      [{matching, true} | Vars],
+                      [{matching, false}, Body],
+                      [{matching, true} | ExceptionVars],
+                      [{matching, false}, Handler]],
     InnerNodesSets.
 
 set_inner_nodes_sets_of_c_try(Node, [[Argument], Vars, [Body], ExceptionVars, [Handler]]) ->

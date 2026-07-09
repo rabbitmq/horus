@@ -85,7 +85,7 @@ do_extract_function(
   Reference,
   #fun_extract{module = ThisModule,
                name = _InternalName,
-               arity = _RealArity} = FunExtract,
+               arity = RealArity} = FunExtract,
   Extraction) ->
     {ok, CoreErlang1} = horus_cerl_utils:get(Reference),
     % ?LOG_ALERT("Horus: function ~0p Core Erlang:~n~p", [Reference, CoreErlang1]),
@@ -161,9 +161,20 @@ do_extract_function(
                                                        #{VarName := _} ->
                                                            Vars;
                                                        _  ->
-                                                           CurrentFun1 = CurrentFun#{VarName => Matching},
-                                                           VarsAtDepth = [CurrentFun1 | PrevFuns],
-                                                           Vars#{Depth => VarsAtDepth}
+                                                           UpperDepths = tl(FunDepths),
+                                                           Defd = lists:any(
+                                                                    fun(UD) ->
+                                                                            [F | _] = maps:get(UD, Vars),
+                                                                            maps:get(VarName, F, false)
+                                                                    end, UpperDepths),
+                                                           case Defd of
+                                                               true ->
+                                                                   Vars;
+                                                               false ->
+                                                                   CurrentFun1 = CurrentFun#{VarName => Matching},
+                                                                   VarsAtDepth = [CurrentFun1 | PrevFuns],
+                                                                   Vars#{Depth => VarsAtDepth}
+                                                           end
                                                    end,
                                            {in, {Vars1, FunDepths, Extraction1}};
                                        true ->
@@ -223,6 +234,7 @@ do_extract_function(
                                                           || VarName <- UndefVars3],
                                             Args = cerl:fun_vars(Node),
                                             Args1 = Args ++ UndefVars4,
+                                            ?assertEqual(RealArity, length(Args1)),
                                             % Node1 = cerl:set_ann(Node, Ann3),
                                             Node1 = Node,
                                             Node2 = cerl:update_c_fun(
