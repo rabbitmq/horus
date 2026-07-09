@@ -1044,7 +1044,7 @@ exec(
         erlang:apply(Module, ?SF_ENTRYPOINT, Args ++ Env1)
     catch
         Class:Reason:Stacktrace ->
-            logger:alert("~s:~0p:~p", [Class, Reason, Stacktrace]),
+            % logger:alert("~s:~0p:~p", [Class, Reason, Stacktrace]),
             Stacktrace1 = reconstruct_original_stracktrace(
                             StandaloneFun, Stacktrace),
             erlang:raise(Class, Reason, Stacktrace1)

@@ -126,8 +126,8 @@ multiple_nested_higher_order_functions_test() ->
     StandaloneFun = ?make_standalone_fun(
                         begin
                             MapFun = fun(X, Y) -> {X, Y} end,
-                            Fun = fun projection_fun_for_sets/1,
-                            Fun(MapFun)
+                            % Fun = fun projection_fun_for_sets/1,
+                            projection_fun_for_sets(MapFun)
                         end),
     ?assertStandaloneFun(StandaloneFun),
     Ret1 = horus:exec(StandaloneFun, []),
