@@ -16,6 +16,19 @@
          get_matching/1,
          get_depth/1]).
 
+-if(?OTP_RELEASE < 29).
+-dialyzer({no_missing_calls, [get_inner_nodes_sets_of_c_record/1,
+                              set_inner_nodes_sets_of_c_record/2,
+                              get_inner_nodes_sets_of_c_record_pair/1,
+                              set_inner_nodes_sets_of_c_record_pair/2]}).
+-endif.
+
+-type cerl_ctype() :: alias | apply | binary | bitstr | call | 'case' |
+                      'catch' | clause | cons | 'fun' | 'let' | letrec |
+                      literal | map | map_pair | module | opaque | primop |
+                      'receive' | seq | record | record_pair | 'try' | tuple |
+                      values | var.
+
 -record(fold, {pre_callback,
                post_callback,
                priv,
@@ -44,10 +57,13 @@ do_get(Reference, Target, AbstractCode) ->
                        deterministic],
     {ok, _, ModuleCoreErlang, _} = compile:forms(
                                      AbstractCode, CompilerOptions),
-    % ?LOG_ALERT("Module Core Erlang: ~p", [ModuleCoreErlang]),
+    do_get1(Reference, Target, ModuleCoreErlang).
+
+do_get1(Reference, Target, ModuleCoreErlang) when is_function(Reference) ->
+    ?LOG_ALERT("Module Core Erlang: ~p", [ModuleCoreErlang]),
     PreCallback = fun(Node, _Fold, undefined = Priv) ->
                           case cerl:type(Node) of
-                              'fun' when is_function(Reference) ->
+                              'fun' ->
                                   Ann = cerl:get_ann(Node),
                                   case lists:keyfind(id, 1, Ann) of
                                       {id, {_, _, ThisName}} ->
@@ -59,23 +75,50 @@ do_get(Reference, Target, AbstractCode) ->
                                       false ->
                                           {in, Priv}
                                   end;
-                              'fun' when is_tuple(Reference) ->
-                                  Ann = cerl:get_ann(Node),
-                                  case lists:keyfind(function, 1, Ann) of
-                                      {function, FunName} ->
-                                          case FunName of
-                                              Target -> {stop, Node};
-                                              _      -> {in, Priv}
-                                          end;
-                                      false ->
-                                          {in, Priv}
+                              _ ->
+                                  {in, Priv}
+                          end
+                  end,
+    case horus_cerl_utils:fold(ModuleCoreErlang, PreCallback, none, undefined) of
+        {interrupted, FunCoreErlang} ->
+            {ok, FunCoreErlang}
+    end;
+do_get1(Reference, Target, ModuleCoreErlang) when is_tuple(Reference) ->
+    % ?LOG_ALERT("Module Core Erlang: ~p", [ModuleCoreErlang]),
+    PreCallback = fun(Node, _Fold, undefined = Priv) ->
+                          case cerl:type(Node) of
+                              module ->
+                                  Definitions = cerl:module_defs(Node),
+                                  case find_ref(Definitions, Target) of
+                                      undefined ->
+                                          {in, Priv};
+                                      FunCoreErlang ->
+                                          {stop, FunCoreErlang}
+                                  end;
+                              letrec ->
+                                  Definitions = cerl:letrec_defs(Node),
+                                  case find_ref(Definitions, Target) of
+                                      undefined ->
+                                          {in, Priv};
+                                      FunCoreErlang ->
+                                          {stop, FunCoreErlang}
                                   end;
                               _ ->
                                   {in, Priv}
                           end
                   end,
-    FunCoreErlang = horus_cerl_utils:fold(ModuleCoreErlang, PreCallback, none, undefined),
-    {ok, FunCoreErlang}.
+    case horus_cerl_utils:fold(ModuleCoreErlang, PreCallback, none, undefined) of
+        {interrupted, FunCoreErlang} ->
+            {ok, FunCoreErlang}
+    end.
+
+find_ref([{Var, FunCoreErlang} | Rest], Target) ->
+    case cerl:var_name(Var) of
+        Target -> FunCoreErlang;
+        _      -> find_ref(Rest, Target)
+    end;
+find_ref([], _Target) ->
+    undefined.
 
 fold(Node, PreCallback, PostCallback, Priv) ->
     Fold = #fold{pre_callback = PreCallback,
@@ -98,7 +141,7 @@ fold([post | Rest], #fold{output_buffer = [Node | OutputBuffer], depth = Depth} 
             Fold2 = Fold1#fold{output_buffer = OutputBuffer1},
             fold(Rest, Fold2);
         {abort, #fold{priv = Priv1}} ->
-            Priv1
+            {interrupted, Priv1}
     end;
 fold([Node | Rest], #fold{depth = Depth} = Fold) ->
     ?LOG_ALERT(
@@ -114,7 +157,7 @@ fold([Node | Rest], #fold{depth = Depth} = Fold) ->
             Fold2 = add_to_output(Node1, Fold1),
             fold(Rest1, Fold2);
         {stop, #fold{priv = Priv1}} ->
-            Priv1
+            {interrupted, Priv1}
     end;
 fold([], #fold{output_buffer = [OutputNode], priv = Priv}) ->
     {ok, OutputNode, Priv}.
@@ -203,79 +246,188 @@ fold_more_inner_nodes(
                       depth = Depth - 1},
     fold(Rest, Fold1).
 
+-spec get_inner_nodes_sets(NodeType, Node) -> InnerNodesSets when
+      NodeType :: cerl_ctype(),
+      Node :: cerl:cerl(),
+      InnerNodesSets :: [InnerNodesSet],
+      InnerNodesSet :: [cerl:cerl()].
+
 get_inner_nodes_sets(alias, Node) ->
     get_inner_nodes_sets_of_c_alias(Node);
 get_inner_nodes_sets(apply, Node) ->
     get_inner_nodes_sets_of_c_apply(Node);
+get_inner_nodes_sets(binary, Node) ->
+    get_inner_nodes_sets_of_c_binary(Node);
+get_inner_nodes_sets(bitstr, Node) ->
+    get_inner_nodes_sets_of_c_bitstr(Node);
+get_inner_nodes_sets(call, Node) ->
+    get_inner_nodes_sets_of_c_call(Node);
 get_inner_nodes_sets('case', Node) ->
     get_inner_nodes_sets_of_c_case(Node);
+get_inner_nodes_sets('catch', Node) ->
+    get_inner_nodes_sets_of_c_catch(Node);
 get_inner_nodes_sets(clause, Node) ->
     get_inner_nodes_sets_of_c_clause(Node);
+get_inner_nodes_sets(cons, Node) ->
+    get_inner_nodes_sets_of_c_cons(Node);
 get_inner_nodes_sets('fun', Node) ->
     get_inner_nodes_sets_of_c_fun(Node);
+get_inner_nodes_sets(letrec, Node) ->
+    get_inner_nodes_sets_of_c_letrec(Node);
 get_inner_nodes_sets('let', Node) ->
     get_inner_nodes_sets_of_c_let(Node);
+get_inner_nodes_sets(literal, _Node) ->
+    [];
+get_inner_nodes_sets(map, Node) ->
+    get_inner_nodes_sets_of_c_map(Node);
+get_inner_nodes_sets(map_pair, Node) ->
+    get_inner_nodes_sets_of_c_map_pair(Node);
 get_inner_nodes_sets(module, Node) ->
     get_inner_nodes_sets_of_c_module(Node);
+get_inner_nodes_sets(opaque, _Node) ->
+    [];
+get_inner_nodes_sets(primop, Node) ->
+    get_inner_nodes_sets_of_c_primop(Node);
+get_inner_nodes_sets('receive', Node) ->
+    get_inner_nodes_sets_of_c_receive(Node);
+get_inner_nodes_sets(record, Node) ->
+    get_inner_nodes_sets_of_c_record(Node);
+get_inner_nodes_sets(record_pair, Node) ->
+    get_inner_nodes_sets_of_c_record_pair(Node);
 get_inner_nodes_sets(seq, Node) ->
     get_inner_nodes_sets_of_c_seq(Node);
-get_inner_nodes_sets(_NodeType, _Node) ->
+get_inner_nodes_sets('try', Node) ->
+    get_inner_nodes_sets_of_c_try(Node);
+get_inner_nodes_sets(tuple, Node) ->
+    get_inner_nodes_sets_of_c_tuple(Node);
+get_inner_nodes_sets(values, Node) ->
+    get_inner_nodes_sets_of_c_values(Node);
+get_inner_nodes_sets(var, _Node) ->
     [].
 
 set_inner_nodes_sets(alias, Node, InnerNodesSets) ->
     set_inner_nodes_sets_of_c_alias(Node, InnerNodesSets);
 set_inner_nodes_sets(apply, Node, InnerNodesSets) ->
     set_inner_nodes_sets_of_c_apply(Node, InnerNodesSets);
+set_inner_nodes_sets(binary, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_binary(Node, InnerNodesSets);
+set_inner_nodes_sets(bitstr, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_bitstr(Node, InnerNodesSets);
+set_inner_nodes_sets(call, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_call(Node, InnerNodesSets);
 set_inner_nodes_sets('case', Node, InnerNodesSets) ->
     set_inner_nodes_sets_of_c_case(Node, InnerNodesSets);
+set_inner_nodes_sets('catch', Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_catch(Node, InnerNodesSets);
 set_inner_nodes_sets(clause, Node, InnerNodesSets) ->
     set_inner_nodes_sets_of_c_clause(Node, InnerNodesSets);
+set_inner_nodes_sets(cons, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_cons(Node, InnerNodesSets);
 set_inner_nodes_sets('fun', Node, InnerNodesSets) ->
     set_inner_nodes_sets_of_c_fun(Node, InnerNodesSets);
 set_inner_nodes_sets('let', Node, InnerNodesSets) ->
     set_inner_nodes_sets_of_c_let(Node, InnerNodesSets);
+set_inner_nodes_sets(letrec, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_letrec(Node, InnerNodesSets);
+set_inner_nodes_sets(map, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_map(Node, InnerNodesSets);
+set_inner_nodes_sets(map_pair, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_map_pair(Node, InnerNodesSets);
 set_inner_nodes_sets(module, Node, InnerNodesSets) ->
     set_inner_nodes_sets_of_c_module(Node, InnerNodesSets);
+set_inner_nodes_sets('receive', Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_receive(Node, InnerNodesSets);
+set_inner_nodes_sets(record, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_record(Node, InnerNodesSets);
+set_inner_nodes_sets(record_pair, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_record_pair(Node, InnerNodesSets);
+set_inner_nodes_sets(primop, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_primop(Node, InnerNodesSets);
 set_inner_nodes_sets(seq, Node, InnerNodesSets) ->
-    set_inner_nodes_sets_of_c_seq(Node, InnerNodesSets).
+    set_inner_nodes_sets_of_c_seq(Node, InnerNodesSets);
+set_inner_nodes_sets('try', Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_try(Node, InnerNodesSets);
+set_inner_nodes_sets(tuple, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_tuple(Node, InnerNodesSets);
+set_inner_nodes_sets(values, Node, InnerNodesSets) ->
+    set_inner_nodes_sets_of_c_values(Node, InnerNodesSets).
 
 get_inner_nodes_sets_of_c_alias(Node) ->
-    Var = cerl:alias_var(Node),
+    Variable = cerl:alias_var(Node),
     Pattern = cerl:alias_pat(Node),
-    InnerNodesSets = [[Var], [Pattern]],
+    InnerNodesSets = [[Variable], [Pattern]],
     InnerNodesSets.
 
-set_inner_nodes_sets_of_c_alias(Node, [[Var], [Pattern]]) ->
-    Node1 = cerl:update_c_alias(
-              Node,
-              Var,
-              Pattern),
+set_inner_nodes_sets_of_c_alias(Node, [[Variable], [Pattern]]) ->
+    ?assert(cerl:is_c_var(Variable)),
+    Node1 = cerl:update_c_alias(Node, Variable, Pattern),
     Node1.
 
 get_inner_nodes_sets_of_c_apply(Node) ->
-    Op = cerl:apply_op(Node),
-    Args = cerl:apply_args(Node),
-    InnerNodesSets = [[Op], Args],
+    Operator = cerl:apply_op(Node),
+    Arguments = cerl:apply_args(Node),
+    InnerNodesSets = [[Operator], Arguments],
     InnerNodesSets.
 
-set_inner_nodes_sets_of_c_apply(Node, [[Op], Args]) ->
-    Node1 = cerl:update_c_apply(
-              Node,
-              Op,
-              Args),
+set_inner_nodes_sets_of_c_apply(Node, [[Operator], Arguments]) ->
+    ?assert(is_list(Arguments)),
+    Node1 = cerl:update_c_apply(Node, Operator, Arguments),
+    Node1.
+
+get_inner_nodes_sets_of_c_binary(Node) ->
+    Segments = cerl:binary_segments(Node),
+    InnerNodesSets = [Segments],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_binary(Node, [Segments]) ->
+    ?assert(is_list(Segments)),
+    Node1 = cerl:update_c_binary(Node, Segments),
+    Node1.
+
+get_inner_nodes_sets_of_c_bitstr(Node) ->
+    Value = cerl:bitstr_val(Node),
+    Size = cerl:bitstr_size(Node),
+    Unit = cerl:bitstr_unit(Node),
+    Type = cerl:bitstr_type(Node),
+    Flags = cerl:bitstr_flags(Node),
+    InnerNodesSets = [[Value], [Size], [Unit], [Type], [Flags]],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_bitstr(
+  Node, [[Value], [Size], [Unit], [Type], [Flags]]) ->
+    Node1 = cerl:update_c_bitstr(Node, Value, Size, Unit, Type, Flags),
+    Node1.
+
+get_inner_nodes_sets_of_c_call(Node) ->
+    Module = cerl:call_module(Node),
+    Name = cerl:call_name(Node),
+    Arguments = cerl:call_args(Node),
+    InnerNodesSets = [[Module], [Name], Arguments],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_call(Node, [[Module], [Name], Arguments]) ->
+    ?assert(is_list(Arguments)),
+    Node1 = cerl:update_c_call(Node, Module, Name, Arguments),
     Node1.
 
 get_inner_nodes_sets_of_c_case(Node) ->
-    Arg = cerl:case_arg(Node),
+    Argument = cerl:case_arg(Node),
     Clauses = cerl:case_clauses(Node),
-    InnerNodesSets = [[Arg], Clauses],
+    InnerNodesSets = [[Argument], Clauses],
     InnerNodesSets.
 
-set_inner_nodes_sets_of_c_case(Node, [[Arg], Clauses]) ->
-    Node1 = cerl:update_c_case(
-              Node,
-              Arg,
-              Clauses),
+set_inner_nodes_sets_of_c_case(Node, [[Argument], Clauses]) ->
+    ?assert(is_list(Clauses)),
+    Node1 = cerl:update_c_case(Node, Argument, Clauses),
+    Node1.
+
+get_inner_nodes_sets_of_c_catch(Node) ->
+    Body = cerl:catch_body(Node),
+    InnerNodesSets = [[Body]],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_catch(Node, [[Body]]) ->
+    Node1 = cerl:update_c_catch(Node, Body),
     Node1.
 
 get_inner_nodes_sets_of_c_clause(Node) ->
@@ -286,62 +438,162 @@ get_inner_nodes_sets_of_c_clause(Node) ->
     InnerNodesSets.
 
 set_inner_nodes_sets_of_c_clause(Node, [Patterns, [Body]]) ->
-    Node1 = cerl:update_c_clause(
-              Node,
-              Patterns,
-              cerl:clause_guard(Node),
-              Body),
+    ?assert(is_list(Patterns)),
+    Guard = cerl:clause_guard(Node),
+    Node1 = cerl:update_c_clause(Node, Patterns, Guard, Body),
+    Node1.
+
+get_inner_nodes_sets_of_c_cons(Node) ->
+    Head = cerl:cons_hd(Node),
+    Tail = cerl:cons_tl(Node),
+    InnerNodesSets = [[Head], [Tail]],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_cons(Node, [[Head], [Tail]]) ->
+    Node1 = cerl:update_c_cons(Node, Head, Tail),
     Node1.
 
 get_inner_nodes_sets_of_c_fun(Node) ->
-    Args = cerl:fun_vars(Node),
+    Arguments = cerl:fun_vars(Node),
     Body = cerl:fun_body(Node),
-    InnerNodesSets = [[{matching, true} | Args],
+    InnerNodesSets = [[{matching, true} | Arguments],
                       [{matching, false}, Body]],
     InnerNodesSets.
 
-set_inner_nodes_sets_of_c_fun(Node, [Args, [Body]]) ->
-    Node1 = cerl:update_c_fun(
-              Node,
-              Args,
-              Body),
+set_inner_nodes_sets_of_c_fun(Node, [Arguments, [Body]]) ->
+    ?assert(is_list(Arguments)),
+    Node1 = cerl:update_c_fun(Node, Arguments, Body),
     Node1.
 
 get_inner_nodes_sets_of_c_let(Node) ->
+    Variables = cerl:let_vars(Node),
     Argument = cerl:let_arg(Node),
     Body = cerl:let_body(Node),
-    InnerNodesSets = [[{matching, true}, Argument],
+    InnerNodesSets = [[{matching, true} | Variables],
+                      [{matching, false}, Argument],
                       [{matching, false}, Body]],
     InnerNodesSets.
 
-set_inner_nodes_sets_of_c_let(Node, [[Argument], [Body]]) ->
-    Node1 = cerl:update_c_let(
+set_inner_nodes_sets_of_c_let(Node, [Variables, [Argument], [Body]]) ->
+    ?assert(is_list(Variables)),
+    Node1 = cerl:update_c_let(Node, Variables, Argument, Body),
+    Node1.
+
+get_inner_nodes_sets_of_c_letrec(Node) ->
+    Definitions = cerl:letrec_defs(Node),
+    FunNodes = [FunNode || {_Var, FunNode} <- Definitions],
+    Body = cerl:letrec_body(Node),
+    InnerNodesSets = [FunNodes, [Body]],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_letrec(Node, [FunNodes, [Body]]) ->
+    ?assert(is_list(FunNodes)),
+    Definitions1 = cerl:letrec_defs(Node),
+    Definitions2 = update_defs(Definitions1, FunNodes),
+    Node1 = cerl:update_c_letrec(Node, Definitions2, Body),
+    Node1.
+
+get_inner_nodes_sets_of_c_map(Node) ->
+    Map = cerl:map_arg(Node),
+    Pairs  = cerl:map_es(Node),
+    InnerNodesSets = [[Map], Pairs],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_map(Node, [[Map], Pairs]) ->
+    ?assert(is_list(Pairs)),
+    Node1 = cerl:update_c_map(Node, Map, Pairs),
+    Node1.
+
+get_inner_nodes_sets_of_c_map_pair(Node) ->
+    Key = cerl:map_pair_key(Node),
+    Value  = cerl:map_pair_val(Node),
+    InnerNodesSets = [[Key], [Value]],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_map_pair(Node, [[Key], [Value]]) ->
+    Node1 = cerl:update_c_map_pair(
               Node,
-              cerl:let_vars(Node),
-              Argument,
-              Body),
+              cerl:map_pair_op(Node),
+              Key,
+              Value),
     Node1.
 
 get_inner_nodes_sets_of_c_module(Node) ->
-    ModuleDefs = cerl:module_defs(Node),
-    FunDefs = [FunDef || {_, FunDef} <- ModuleDefs],
-    InnerNodesSets = [FunDefs],
+    Definitions = cerl:module_defs(Node),
+    FunNodes = [FunNode || {_Var, FunNode} <- Definitions],
+    InnerNodesSets = [FunNodes],
     InnerNodesSets.
 
 set_inner_nodes_sets_of_c_module(Node, [FunNodes]) ->
-    ModuleDefs = [begin
-                      Ann = cerl:get_ann(FunNode),
-                      {function, FunName} = lists:keyfind(function, 1, Ann),
-                      NameNode = cerl:c_var(FunName),
-                      FunDef = {NameNode, FunNode},
-                      FunDef
-                  end || FunNode <- FunNodes],
+    % Definitions = [begin
+    %                    Ann = cerl:get_ann(FunNode),
+    %                    {function, FunName} = lists:keyfind(function, 1, Ann),
+    %                    NameNode = cerl:c_var(FunName),
+    %                    FunDef = {NameNode, FunNode},
+    %                    FunDef
+    %                end || FunNode <- FunNodes],
+    Definitions1 = cerl:module_defs(Node),
+    Definitions2 = update_defs(Definitions1, FunNodes),
     Node1 = cerl:update_c_module(
               Node,
               cerl:module_name(Node),
               cerl:module_exports(Node),
               cerl:module_attrs(Node),
-              ModuleDefs),
+              Definitions2),
+    Node1.
+
+get_inner_nodes_sets_of_c_primop(Node) ->
+    Name = cerl:primop_name(Node),
+    Arguments  = cerl:primop_args(Node),
+    InnerNodesSets = [[Name], Arguments],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_primop(Node, [[Name], Arguments]) ->
+    Node1 = cerl:update_c_primop(
+              Node,
+              Name,
+              Arguments),
+    Node1.
+
+get_inner_nodes_sets_of_c_receive(Node) ->
+    Clauses = cerl:receive_clauses(Node),
+    Timeout = cerl:receive_timeout(Node),
+    Action = cerl:receive_action(Node),
+    InnerNodesSets = [Clauses, [Timeout], [Action]],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_receive(Node, [Clauses, [Timeout], [Action]]) ->
+    ?assert(is_list(Clauses)),
+    Node1 = cerl:update_c_receive(
+              Node,
+              Clauses,
+              Timeout,
+              Action),
+    Node1.
+
+get_inner_nodes_sets_of_c_record(Node) ->
+    Pairs = cerl:record_es(Node),
+    InnerNodesSets = [Pairs],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_record(Node, [Pairs]) ->
+    Node1 = cerl:update_c_record(
+              Node,
+              cerl:record_arg(Node),
+              cerl:record_id(Node),
+              Pairs),
+    Node1.
+
+get_inner_nodes_sets_of_c_record_pair(Node) ->
+    Value  = cerl:record_pair_val(Node),
+    InnerNodesSets = [[Value]],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_record_pair(Node, [[Value]]) ->
+    Node1 = cerl:update_c_record_pair(
+              Node,
+              cerl:record_pair_key(Node),
+              Value),
     Node1.
 
 get_inner_nodes_sets_of_c_seq(Node) ->
@@ -356,6 +608,56 @@ set_inner_nodes_sets_of_c_seq(Node, [[Argument], [Body]]) ->
               Argument,
               Body),
     Node1.
+
+get_inner_nodes_sets_of_c_try(Node) ->
+    Argument = cerl:try_arg(Node),
+    Vars = cerl:try_vars(Node),
+    Body = cerl:try_body(Node),
+    ExceptionVars = cerl:try_evars(Node),
+    Handler = cerl:try_handler(Node),
+    InnerNodesSets = [[Argument], Vars, [Body], ExceptionVars, [Handler]],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_try(Node, [[Argument], Vars, [Body], ExceptionVars, [Handler]]) ->
+    Node1 = cerl:update_c_try(
+              Node,
+              Argument,
+              Vars,
+              Body,
+              ExceptionVars,
+              Handler),
+    Node1.
+
+get_inner_nodes_sets_of_c_tuple(Node) ->
+    Elements = cerl:tuple_es(Node),
+    InnerNodesSets = [Elements],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_tuple(Node, [Elements]) ->
+    Node1 = cerl:update_c_tuple(
+              Node,
+              Elements),
+    Node1.
+
+get_inner_nodes_sets_of_c_values(Node) ->
+    Elements = cerl:values_es(Node),
+    InnerNodesSets = [Elements],
+    InnerNodesSets.
+
+set_inner_nodes_sets_of_c_values(Node, [Elements]) ->
+    Node1 = cerl:update_c_values(
+              Node,
+              Elements),
+    Node1.
+
+update_defs(Definitions, FunNodes) ->
+    update_defs(Definitions, FunNodes, []).
+
+update_defs([{Var, _FunNode} | Rest1], [FunNode | Rest2], Acc) ->
+    Acc1 = [{Var, FunNode} | Acc],
+    update_defs(Rest1, Rest2, Acc1);
+update_defs([], [], Acc) ->
+    lists:reverse(Acc).
 
 get_matching(#fold{matching = Matching}) ->
     Matching.

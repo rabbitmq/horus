@@ -15,7 +15,7 @@
 % -dialyzer([{no_match,
 %             [matches_type/2,
 %              trim_leading_dash3/2]}]).
-%
+
 % concat_binaries_test() ->
 %     Bin = helpers:ensure_not_optimized(<<"a">>),
 %     StandaloneFun = ?make_standalone_fun(
@@ -166,7 +166,7 @@
 %
 % match_float(<<Float/float>>) ->
 %     Float.
-
+%
 % type_inference_for_test_arity_instruction_test() ->
 %     self() ! {text, false},
 %     TextFrame = receive TextMsg -> TextMsg end,
@@ -180,24 +180,24 @@
 %                        end),
 %     ?assertStandaloneFun(StandaloneFun),
 %     ?assertEqual(ok, horus:exec(StandaloneFun, [])).
-
-type_inference_for_test_arity_instruction2_test() ->
-    self() ! {text, false},
-    {Self, TextFrame} = {make_ref(), receive TextMsg -> TextMsg end},
-    self() ! {binary, true},
-    BinaryFrame = receive BinaryMsg -> BinaryMsg end,
-    % BinaryFrame = '_4',
-    F = fun(D) -> {ok, D} end,
-    StandaloneFun = ?make_standalone_fun(
-                       begin
-                           <<0:1>> = encode_frame(TextFrame),
-                           <<1:1>> = encode_frame(BinaryFrame),
-                           ok
-                       end),
-    ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])),
-    {Self, F}.
-
+%
+% type_inference_for_test_arity_instruction2_test() ->
+%     self() ! {text, false},
+%     {Self, TextFrame} = {make_ref(), receive TextMsg -> TextMsg end},
+%     self() ! {binary, true},
+%     BinaryFrame = receive BinaryMsg -> BinaryMsg end,
+%     % BinaryFrame = '_4',
+%     F = fun(D) -> {ok, D} end,
+%     StandaloneFun = ?make_standalone_fun(
+%                        begin
+%                            <<0:1>> = encode_frame(TextFrame),
+%                            <<1:1>> = encode_frame(BinaryFrame),
+%                            ok
+%                        end),
+%     ?assertStandaloneFun(StandaloneFun),
+%     ?assertEqual(ok, horus:exec(StandaloneFun, [])),
+%     {Self, F}.
+%
 % type_inference_for_test_arity_instruction3_test() ->
 %     self() ! {text, false},
 %     TextFrame = receive TextMsg -> TextMsg end,
@@ -212,63 +212,63 @@ type_inference_for_test_arity_instruction2_test() ->
 %     ?assertStandaloneFun(StandaloneFun),
 %     ?assertEqual(ok, horus:exec(StandaloneFun, [])),
 %     {TextFrame, BinaryFrame}.
-
-encode_frame(Frame)
-    when is_tuple(Frame) andalso
-        (element(1, Frame) =:= text orelse
-         element(1, Frame) =:= binary) ->
-    <<(encode_fin(Frame))/bitstring>>.
-
-encode_fin({text, false})   -> <<0:1/integer>>;
-encode_fin({binary, false}) -> <<0:1/integer>>;
-encode_fin(_)               -> <<1:1/integer>>.
-
-% bit_string_comprehension_expression_test() ->
-%     Data = crypto:strong_rand_bytes(128),
-%     <<Mask:32/integer>> = crypto:strong_rand_bytes(4),
-%     StandaloneFun = ?make_standalone_fun(
-%                        begin
-%                            <<<<(Part bxor Mask):32/integer>>
-%                              || <<Part:32/integer>> <= Data>>
-%                        end),
-%     ?assertStandaloneFun(StandaloneFun),
-%     ?assertEqual(
-%        <<<<(Part bxor Mask):32/integer>>
-%          || <<Part:32/integer>> <= Data>>,
-%        horus:exec(StandaloneFun, [])).
 %
-% bitstring_flags_test() ->
-%     LittleSignedBin = helpers:ensure_not_optimized(
-%                         <<-42:4/little-signed-integer-unit:8>>),
-%     LittleUnsignedBin = helpers:ensure_not_optimized(
-%                           <<42:4/little-unsigned-integer-unit:8>>),
-%     BigSignedBin = helpers:ensure_not_optimized(
-%                      <<-42:4/big-signed-integer-unit:8>>),
-%     BigUnsignedBin = helpers:ensure_not_optimized(
-%                        <<42:4/big-unsigned-integer-unit:8>>),
-%     Decode = ?make_standalone_fun(
-%                begin
-%                    {match_bitstring_flags(
-%                       {little_signed, LittleSignedBin}),
-%                     match_bitstring_flags(
-%                       {little_unsigned, LittleUnsignedBin}),
-%                     match_bitstring_flags(
-%                       {big_signed, BigSignedBin}),
-%                     match_bitstring_flags(
-%                       {big_unsigned, BigUnsignedBin})}
-%                end),
-%     ?assertStandaloneFun(Decode),
-%     ?assertEqual({-42, 42, -42, 42}, horus:exec(Decode, [])).
+% encode_frame(Frame)
+%     when is_tuple(Frame) andalso
+%         (element(1, Frame) =:= text orelse
+%          element(1, Frame) =:= binary) ->
+%     <<(encode_fin(Frame))/bitstring>>.
 %
-% match_bitstring_flags(
-%   {little_signed, <<N:4/little-signed-integer-unit:8>>}) ->
-%     N;
-% match_bitstring_flags(
-%   {big_signed, <<N:4/big-signed-integer-unit:8>>}) ->
-%     N;
-% match_bitstring_flags(
-%   {little_unsigned, <<N:4/little-unsigned-integer-unit:8>>}) ->
-%     N;
-% match_bitstring_flags(
-%   {big_unsigned, <<N:4/big-unsigned-integer-unit:8>>}) ->
-%     N.
+% encode_fin({text, false})   -> <<0:1/integer>>;
+% encode_fin({binary, false}) -> <<0:1/integer>>;
+% encode_fin(_)               -> <<1:1/integer>>.
+
+bit_string_comprehension_expression_test() ->
+    Data = crypto:strong_rand_bytes(128),
+    <<Mask:32/integer>> = crypto:strong_rand_bytes(4),
+    StandaloneFun = ?make_standalone_fun(
+                       begin
+                           <<<<(Part bxor Mask):32/integer>>
+                             || <<Part:32/integer>> <= Data>>
+                       end),
+    ?assertStandaloneFun(StandaloneFun),
+    ?assertEqual(
+       <<<<(Part bxor Mask):32/integer>>
+         || <<Part:32/integer>> <= Data>>,
+       horus:exec(StandaloneFun, [])).
+
+bitstring_flags_test() ->
+    LittleSignedBin = helpers:ensure_not_optimized(
+                        <<-42:4/little-signed-integer-unit:8>>),
+    LittleUnsignedBin = helpers:ensure_not_optimized(
+                          <<42:4/little-unsigned-integer-unit:8>>),
+    BigSignedBin = helpers:ensure_not_optimized(
+                     <<-42:4/big-signed-integer-unit:8>>),
+    BigUnsignedBin = helpers:ensure_not_optimized(
+                       <<42:4/big-unsigned-integer-unit:8>>),
+    Decode = ?make_standalone_fun(
+               begin
+                   {match_bitstring_flags(
+                      {little_signed, LittleSignedBin}),
+                    match_bitstring_flags(
+                      {little_unsigned, LittleUnsignedBin}),
+                    match_bitstring_flags(
+                      {big_signed, BigSignedBin}),
+                    match_bitstring_flags(
+                      {big_unsigned, BigUnsignedBin})}
+               end),
+    ?assertStandaloneFun(Decode),
+    ?assertEqual({-42, 42, -42, 42}, horus:exec(Decode, [])).
+
+match_bitstring_flags(
+  {little_signed, <<N:4/little-signed-integer-unit:8>>}) ->
+    N;
+match_bitstring_flags(
+  {big_signed, <<N:4/big-signed-integer-unit:8>>}) ->
+    N;
+match_bitstring_flags(
+  {little_unsigned, <<N:4/little-unsigned-integer-unit:8>>}) ->
+    N;
+match_bitstring_flags(
+  {big_unsigned, <<N:4/big-unsigned-integer-unit:8>>}) ->
+    N.

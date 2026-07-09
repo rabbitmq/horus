@@ -84,17 +84,26 @@ extract_function({Module, Name, Arity} = MFA, Extraction) ->
 do_extract_function(
   Reference,
   #fun_extract{module = ThisModule,
-               name = InternalName,
-               arity = RealArity} = FunExtract,
+               name = _InternalName,
+               arity = _RealArity} = FunExtract,
   Extraction) ->
     {ok, CoreErlang1} = horus_cerl_utils:get(Reference),
-    % ?LOG_ALERT("Horus: function ~0p Core Erlang: ~p", [Reference, CoreErlang1]),
+    % ?LOG_ALERT("Horus: function ~0p Core Erlang:~n~p", [Reference, CoreErlang1]),
 
     %% Goals:
     %% 1. Is the expression allowed?
     %% 2. Find new calls
     PreCallback1 = fun(Node, Fold, {Vars, #extraction{functions = Functions} = Extraction1} = Acc) ->
                            case cerl:type(Node) of
+                               letrec ->
+                                   Definitions = cerl:letrec_defs(Node),
+                                   Functions1 = lists:foldl(
+                                                  fun({Var, _Fun}, Fs) ->
+                                                          {N, A} = cerl:var_name(Var),
+                                                          Fs#{{ThisModule, N, A} => comprehension}
+                                                  end, Functions, Definitions),
+                                   Extraction2 = Extraction1#extraction{functions = Functions1},
+                                   {in, {Vars, Extraction2}};
                                apply ->
                                    Op = cerl:apply_op(Node),
                                    case cerl:is_c_var(Op) of
@@ -113,14 +122,20 @@ do_extract_function(
                                                                            functions = Functions1
                                                                           }
                                                                  end,
-                                                   LocalFunName = gen_function_name(
-                                                                    ThisModule,
-                                                                    Name),
-                                                   Op1 = cerl:update_c_var(Op, {LocalFunName, Arity}),
-                                                   Node1 = cerl:update_c_apply(
-                                                             Node,
-                                                             Op1,
-                                                             cerl:apply_args(Node)),
+                                                   #extraction{functions = Functions2} = Extraction2,
+                                                   Node1 = case Functions2 of
+                                                               #{CallRef := comprehension} ->
+                                                                   Node;
+                                                               _ ->
+                                                                   LocalFunName = gen_function_name(
+                                                                                    ThisModule,
+                                                                                    Name),
+                                                                   Op1 = cerl:update_c_var(Op, {LocalFunName, Arity}),
+                                                                   cerl:update_c_apply(
+                                                                     Node,
+                                                                     Op1,
+                                                                     cerl:apply_args(Node))
+                                                           end,
                                                    {in, Node1, {Vars, Extraction2}};
                                                _ ->
                                                    {in, Acc}
@@ -134,7 +149,8 @@ do_extract_function(
                                    Vars1 = case Vars of
                                                #{VarName := _} ->
                                                    Vars;
-                                               _ when is_integer(VarName) ->
+                                               _ when is_atom(VarName) orelse
+                                                      is_integer(VarName) ->
                                                    Vars#{VarName => Matching};
                                                _ ->
                                                    Vars
@@ -153,11 +169,11 @@ do_extract_function(
                                 'fun' ->
                                     case horus_cerl_utils:get_depth(Fold) of
                                         0 ->
-                                            FunName = {InternalName, RealArity},
-                                            Ann = cerl:get_ann(Node),
-                                            Ann1 = lists:keydelete(function, 1, Ann),
-                                            Ann2 = lists:keydelete(id, 1, Ann1),
-                                            Ann3 = [{function, FunName} | Ann2],
+                                            % FunName = {InternalName, RealArity},
+                                            % Ann = cerl:get_ann(Node),
+                                            % Ann1 = lists:keydelete(function, 1, Ann),
+                                            % Ann2 = lists:keydelete(id, 1, Ann1),
+                                            % Ann3 = [{function, FunName} | Ann2],
                                             UndefVars1 = maps:fold(
                                                            fun
                                                                (_VarName, true, Acc1) ->
@@ -170,7 +186,8 @@ do_extract_function(
                                                           || VarName <- UndefVars2],
                                             Args = cerl:fun_vars(Node),
                                             Args1 = Args ++ UndefVars3,
-                                            Node1 = cerl:set_ann(Node, Ann3),
+                                            % Node1 = cerl:set_ann(Node, Ann3),
+                                            Node1 = Node,
                                             Node2 = cerl:update_c_fun(
                                                       Node1,
                                                       Args1,
@@ -205,22 +222,29 @@ create_standanole_fun(
     FunctionsRefs = lists:sort(maps:keys(Functions)),
     FunctionsCoreErlang = lists:foldr(
                             fun(Reference, Acc) ->
-                                    #fun_extract{
-                                       core_erlang = CoreErlang
-                                      } = maps:get(Reference, Functions),
-                                    Ann = cerl:get_ann(CoreErlang),
-                                    {function, FunName} = lists:keyfind(function, 1, Ann),
-                                    FunRef = {cerl:c_var(FunName), CoreErlang},
-                                    [FunRef | Acc]
+                                    case Functions of
+                                        #{Reference := #fun_extract{
+                                                          name = InternalName,
+                                                          arity = RealArity,
+                                                          core_erlang = CoreErlang
+                                                         }} ->
+                                            % Ann = cerl:get_ann(CoreErlang),
+                                            % {function, FunName} = lists:keyfind(function, 1, Ann),
+                                            FunName = {InternalName, RealArity},
+                                            FunRef = {cerl:c_var(FunName), CoreErlang},
+                                            [FunRef | Acc];
+                                        #{Reference := comprehension} ->
+                                            Acc
+                                    end
                             end, [], FunctionsRefs),
     Exports = [cerl:c_var({EntryPointName, EntryPointArity})],
     ModuleCoreErlang = cerl:c_module(
                          cerl:c_atom(GeneratedModuleName),
                          Exports,
                          FunctionsCoreErlang),
-    % ?LOG_ALERT(
-    %    "Generated module Core Erlang:~n~p~n",
-    %    [ModuleCoreErlang]),
+    ?LOG_ALERT(
+       "Generated module Core Erlang:~n~p~n",
+       [ModuleCoreErlang]),
 
     FunNameMapping = gen_fun_name_mapping(Functions),
     StandaloneFun = #horus_fun{
@@ -275,4 +299,9 @@ gen_fun_name_mapping1(
     #{module := M,
       name := F,
       arity := A} = FunInfo,
-    Acc#{{Name, Arity} => {M, F, A}}.
+    Acc#{{Name, Arity} => {M, F, A}};
+gen_fun_name_mapping1(
+  _MFA,
+  comprehension,
+  Acc) ->
+    Acc.
