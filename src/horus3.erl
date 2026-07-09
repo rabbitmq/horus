@@ -68,7 +68,7 @@ extract_function(Fun, #extraction{'fun' = EntryPoint} = Extraction)
                        false -> gen_function_name(Module, Name)
                    end,
     RealArity = Arity + length(Env),
-    logger:alert("Env = ~p~nArity = ~b -> ~b", [Env, Arity, RealArity]),
+    % logger:alert("Env = ~p~nArity = ~b -> ~b", [Env, Arity, RealArity]),
     FunExtract = #fun_extract{module = Module,
                               name = InternalName,
                               arity = RealArity,
@@ -93,7 +93,7 @@ do_extract_function(
     %% Goals:
     %% 1. Is the expression allowed?
     %% 2. Find new calls
-    PreCallback1 = fun(Node, Fold, {Vars, #extraction{functions = Functions} = Extraction1} = Acc) ->
+    PreCallback1 = fun(Node, Fold, {Vars, FunDepths, #extraction{functions = Functions} = Extraction1} = Acc) ->
                            case cerl:type(Node) of
                                letrec ->
                                    Definitions = cerl:letrec_defs(Node),
@@ -103,7 +103,7 @@ do_extract_function(
                                                           Fs#{{ThisModule, N, A} => comprehension}
                                                   end, Functions, Definitions),
                                    Extraction2 = Extraction1#extraction{functions = Functions1},
-                                   {in, {Vars, Extraction2}};
+                                   {in, {Vars, FunDepths, Extraction2}};
                                apply ->
                                    Op = cerl:apply_op(Node),
                                    case cerl:is_c_var(Op) of
@@ -136,26 +136,39 @@ do_extract_function(
                                                                      Op1,
                                                                      cerl:apply_args(Node))
                                                            end,
-                                                   {in, Node1, {Vars, Extraction2}};
+                                                   {in, Node1, {Vars, FunDepths, Extraction2}};
                                                _ ->
                                                    {in, Acc}
                                            end;
                                        false ->
                                            {in, Acc}
                                    end;
+                               'fun' ->
+                                   Depth = horus_cerl_utils:get_depth(Fold),
+                                   PrevFuns = maps:get(Depth, Vars, []),
+                                   VarsAtDepth = [#{} | PrevFuns],
+                                   Vars1 = Vars#{Depth => VarsAtDepth},
+                                   FunDepths1 = [Depth | FunDepths],
+                                   {in, {Vars1, FunDepths1, Extraction1}};
                                var ->
-                                   Matching = horus_cerl_utils:get_matching(Fold),
                                    VarName = cerl:var_name(Node),
-                                   Vars1 = case Vars of
-                                               #{VarName := _} ->
-                                                   Vars;
-                                               _ when is_atom(VarName) orelse
-                                                      is_integer(VarName) ->
-                                                   Vars#{VarName => Matching};
-                                               _ ->
-                                                   Vars
-                                           end,
-                                   {in, {Vars1, Extraction1}};
+                                   if
+                                       is_atom(VarName) orelse is_integer(VarName) ->
+                                           Matching = horus_cerl_utils:get_matching(Fold),
+                                           Depth = hd(FunDepths),
+                                           [CurrentFun | PrevFuns] = maps:get(Depth, Vars),
+                                           Vars1 = case CurrentFun of
+                                                       #{VarName := _} ->
+                                                           Vars;
+                                                       _  ->
+                                                           CurrentFun1 = CurrentFun#{VarName => Matching},
+                                                           VarsAtDepth = [CurrentFun1 | PrevFuns],
+                                                           Vars#{Depth => VarsAtDepth}
+                                                   end,
+                                           {in, {Vars1, FunDepths, Extraction1}};
+                                       true ->
+                                           {in, Acc}
+                                   end;
                                _ ->
                                    {in, Acc}
                            end
@@ -164,7 +177,7 @@ do_extract_function(
     %% Goals:
     %% 1. Add missing arguments for `fun()' taking arguments from their
     %%    environment.
-    PostCallback1 = fun(Node, Fold, {Vars, _Extraction1} = Acc) ->
+    PostCallback1 = fun(Node, Fold, {Vars, FunDepths, Extraction1} = Acc) ->
                             case cerl:type(Node) of
                                 'fun' ->
                                     case horus_cerl_utils:get_depth(Fold) of
@@ -174,18 +187,42 @@ do_extract_function(
                                             % Ann1 = lists:keydelete(function, 1, Ann),
                                             % Ann2 = lists:keydelete(id, 1, Ann1),
                                             % Ann3 = [{function, FunName} | Ann2],
-                                            UndefVars1 = maps:fold(
-                                                           fun
-                                                               (_VarName, true, Acc1) ->
-                                                                   Acc1;
-                                                               (VarName, false, Acc1) ->
-                                                                   [VarName | Acc1]
-                                                           end, [], Vars),
-                                            UndefVars2 = lists:sort(UndefVars1),
-                                            UndefVars3 = [cerl:c_var(VarName)
-                                                          || VarName <- UndefVars2],
+                                            UndefVars1 = maps:map(
+                                                           fun(_Depth, VarsAtDepth) ->
+                                                                   VarsAtDepth1 = [begin
+                                                                                       V1 = maps:fold(
+                                                                                              fun
+                                                                                                  (_VarName, true, Acc1) ->
+                                                                                                      Acc1;
+                                                                                                  (VarName, false, Acc1) ->
+                                                                                                      [VarName | Acc1]
+                                                                                              end, [], V),
+                                                                                       V2 = lists:sort(V1),
+                                                                                       V2
+                                                                                   end || V <- VarsAtDepth],
+                                                                   VarsAtDepth2 = lists:flatten(VarsAtDepth1),
+                                                                   VarsAtDepth2
+                                                           end, Vars),
+                                            Ks = lists:reverse(lists:sort(maps:keys(UndefVars1))),
+                                            UndefVars2 = [maps:get(K, UndefVars1) || K <- Ks],
+                                            UndefVars3 = lists:flatten(UndefVars2),
+                                            % UndefVars1 = [VarName || {VarName, false} <- Vars],
+                                            % UndefVars2 = lists:reverse(UndefVars1),
+                                            % UndefVars3 = lists:sort(UndefVars2),
+                                            % UndefVars3 = lists:sort(
+                                            %                fun
+                                            %                    (A, B) when is_atom(A) andalso is_atom(B) ->
+                                            %                        true;
+                                            %                    (A, B) when is_integer(A) andalso is_integer(B) ->
+                                            %                        A < B;
+                                            %                    (A, B) ->
+                                            %                        is_atom(A) andalso is_integer(B)
+                                            %                end, UndefVars2),
+                                            % io:format(standard_error, "----- VARS: ~0p -> ~0p~n", [Vars, UndefVars3]),
+                                            UndefVars4 = [cerl:c_var(VarName)
+                                                          || VarName <- UndefVars3],
                                             Args = cerl:fun_vars(Node),
-                                            Args1 = Args ++ UndefVars3,
+                                            Args1 = Args ++ UndefVars4,
                                             % Node1 = cerl:set_ann(Node, Ann3),
                                             Node1 = Node,
                                             Node2 = cerl:update_c_fun(
@@ -194,16 +231,17 @@ do_extract_function(
                                                       cerl:fun_body(Node)),
                                             {ok, Node2, Acc};
                                         _ ->
-                                            {ok, Node, Acc}
+                                            FunDepths1 = tl(FunDepths),
+                                            {ok, Node, {Vars, FunDepths1, Extraction1}}
                                     end;
                                 _ ->
                                     {ok, Node, Acc}
                             end
                     end,
-    {ok, CoreErlang2, {_Vars, Extraction2}} = horus_cerl_utils:fold(
-                                                CoreErlang1,
-                                                PreCallback1, PostCallback1,
-                                                {#{}, Extraction}),
+    {ok, CoreErlang2, {_Vars, _FunDepths, Extraction2}} = horus_cerl_utils:fold(
+                                                            CoreErlang1,
+                                                            PreCallback1, PostCallback1,
+                                                            {#{}, [], Extraction}),
 
     FunExtract1 = FunExtract#fun_extract{core_erlang = CoreErlang2},
     #extraction{functions = Functions} = Extraction2,
@@ -242,9 +280,9 @@ create_standanole_fun(
                          cerl:c_atom(GeneratedModuleName),
                          Exports,
                          FunctionsCoreErlang),
-    ?LOG_ALERT(
-       "Generated module Core Erlang:~n~p~n",
-       [ModuleCoreErlang]),
+    % ?LOG_ALERT(
+    %    "Generated module Core Erlang:~n~p~n",
+    %    [ModuleCoreErlang]),
 
     FunNameMapping = gen_fun_name_mapping(Functions),
     StandaloneFun = #horus_fun{

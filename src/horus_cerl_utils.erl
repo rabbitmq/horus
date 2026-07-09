@@ -60,7 +60,7 @@ do_get(Reference, Target, AbstractCode) ->
     do_get1(Reference, Target, ModuleCoreErlang).
 
 do_get1(Reference, Target, ModuleCoreErlang) when is_function(Reference) ->
-    ?LOG_ALERT("Module Core Erlang: ~p", [ModuleCoreErlang]),
+    % ?LOG_ALERT("Module Core Erlang: ~p", [ModuleCoreErlang]),
     PreCallback = fun(Node, _Fold, undefined = Priv) ->
                           case cerl:type(Node) of
                               'fun' ->
@@ -132,7 +132,7 @@ fold([{matching, Matching} | Rest], Fold) ->
 fold([{more_inner_nodes, InputInnerNodesSets, OutputInnerNodesSets, OutputBuffer} | Rest], Fold) ->
     fold_more_inner_nodes(InputInnerNodesSets, OutputInnerNodesSets, OutputBuffer, Rest, Fold);
 fold([post | Rest], #fold{output_buffer = [Node | OutputBuffer], depth = Depth} = Fold) ->
-    ?LOG_ALERT(
+    ?LOG_DEBUG(
        "Horus: ~*sfold/post: node '~s', ann = ~0p",
        [Depth * 2, "", cerl:type(Node), cerl:get_ann(Node)]),
     case run_post_callback(Node, Fold) of
@@ -144,7 +144,7 @@ fold([post | Rest], #fold{output_buffer = [Node | OutputBuffer], depth = Depth} 
             {interrupted, Priv1}
     end;
 fold([Node | Rest], #fold{depth = Depth} = Fold) ->
-    ?LOG_ALERT(
+    ?LOG_DEBUG(
        "Horus: ~*sfold/pre: node '~s', ann = ~0p",
        [Depth * 2, "", cerl:type(Node), cerl:get_ann(Node)]),
     case run_pre_callback(Node, Fold) of
@@ -206,7 +206,7 @@ fold_inner_nodes(
         [] ->
             fold(Rest, Fold);
         [FirstInnerNodesSet | OtherInnerNodesSets] ->
-            ?LOG_ALERT(
+            ?LOG_DEBUG(
                "Horus: ~*sfold/start inner nodes sets: node '~s', 0/~b inner nodes sets handled",
                [Depth * 2, "", cerl:type(Node), length(InnerNodesSets)]),
             Rest1 = [{more_inner_nodes, OtherInnerNodesSets, [], OutputBuffer} | Rest],
@@ -221,7 +221,7 @@ fold_more_inner_nodes(
   [NextInnerNodesSet | OtherInnerNodesSets], OutputInnerNodesSets,
   [Node | _] = OutputBuffer,
   Rest, #fold{output_buffer = OutputInnerNodesSet, depth = Depth} = Fold) ->
-    ?LOG_ALERT(
+    ?LOG_DEBUG(
        "Horus: ~*sfold/continue inner nodes sets: node '~s', ~b/~b inner nodes sets handled",
        [Depth * 2, "", cerl:type(Node), length(OutputInnerNodesSets) + 1, length(OutputInnerNodesSets) + 1 + length(OtherInnerNodesSets) + 1]),
     OutputInnerNodesSet1 = lists:reverse(OutputInnerNodesSet),
@@ -234,7 +234,7 @@ fold_more_inner_nodes(
   [], OutputInnerNodesSets,
   [Node | OutputBuffer],
   Rest, #fold{output_buffer = OutputInnerNodesSet, depth = Depth} = Fold) ->
-    ?LOG_ALERT(
+    ?LOG_DEBUG(
        "Horus: ~*sfold/finish inner nodes sets: node '~s', ~b inner nodes sets",
        [(Depth - 1) * 2, "", cerl:type(Node), length(OutputInnerNodesSets) + 1]),
     OutputInnerNodesSet1 = lists:reverse(OutputInnerNodesSet),
