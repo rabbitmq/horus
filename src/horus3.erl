@@ -295,6 +295,7 @@ create_standanole_fun(
     % ?LOG_ALERT(
     %    "Generated module Core Erlang:~n~p~n",
     %    [ModuleCoreErlang]),
+    horus_cerl_utils:format(ModuleCoreErlang),
 
     FunNameMapping = gen_fun_name_mapping(Functions),
     StandaloneFun = #horus_fun{

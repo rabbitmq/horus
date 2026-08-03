@@ -14,7 +14,8 @@
 -export([get/1,
          fold/4,
          get_matching/1,
-         get_depth/1]).
+         get_depth/1,
+         format/1]).
 
 -if(?OTP_RELEASE < 29).
 -dialyzer({no_missing_calls, [get_inner_nodes_sets_of_c_record/1,
@@ -668,3 +669,7 @@ get_matching(#fold{matching = Matching}) ->
 
 get_depth(#fold{depth = Depth}) ->
     Depth.
+
+format(CoreErlang) ->
+    Txt = core_pp:format(CoreErlang),
+    io:format("~s~n", [Txt]).
