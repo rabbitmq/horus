@@ -389,8 +389,15 @@ to_standalone_fun(Fun) ->
 %% extraction was needed.
 
 to_standalone_fun(Fun, Options) ->
-    {StandaloneFun, _State} = to_standalone_fun1(Fun, Options),
-    StandaloneFun.
+    if
+        node() =:= undefined ->
+            {StandaloneFun, _State} = to_standalone_fun1(Fun, Options),
+            StandaloneFun;
+        true ->
+            R = horus3:to_standalone_fun(Fun, Options),
+            % timer:sleep(500),
+            R
+    end.
 
 -spec to_standalone_fun1(Fun, Options) -> {StandaloneFun, State} when
       Fun :: fun(),

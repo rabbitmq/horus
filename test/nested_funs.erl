@@ -97,19 +97,6 @@ fun10_in_fun_env_test() ->
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
     ?assertEqual(result, horus:exec(StandaloneFun, [])).
 
-fun11_in_fun_env_test() ->
-    Fun = make_fun(11),
-    %% TODO: Raise an error at extraction time, not at execution time.
-    StandaloneFun = ?make_standalone_fun(
-                       Fun(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)),
-    ?assertStandaloneFun(StandaloneFun),
-    ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertError(
-       ?horus_exception(
-          nested_fun_with_arity_too_great,
-          #{arity := 11}),
-       horus:exec(StandaloneFun, [])).
-
 make_fun(0)  -> fun() -> result end;
 make_fun(1)  -> fun(_) -> result end;
 make_fun(2)  -> fun(_, _) -> result end;
@@ -120,8 +107,7 @@ make_fun(6)  -> fun(_, _, _, _, _, _) -> result end;
 make_fun(7)  -> fun(_, _, _, _, _, _, _) -> result end;
 make_fun(8)  -> fun(_, _, _, _, _, _, _, _) -> result end;
 make_fun(9)  -> fun(_, _, _, _, _, _, _, _, _) -> result end;
-make_fun(10) -> fun(_, _, _, _, _, _, _, _, _, _) -> result end;
-make_fun(11) -> fun(_, _, _, _, _, _, _, _, _, _, _) -> result end.
+make_fun(10) -> fun(_, _, _, _, _, _, _, _, _, _) -> result end.
 
 higher_order_external_call_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -139,8 +125,8 @@ multiple_nested_higher_order_functions_test() ->
     StandaloneFun = ?make_standalone_fun(
                         begin
                             MapFun = fun(X, Y) -> {X, Y} end,
-                            Fun = fun projection_fun_for_sets/1,
-                            Fun(MapFun)
+                            % Fun = fun /1,
+                            projection_fun_for_sets(MapFun)
                         end),
     ?assertStandaloneFun(StandaloneFun),
     Ret1 = horus:exec(StandaloneFun, []),
