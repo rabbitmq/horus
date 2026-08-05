@@ -1,0 +1,74 @@
+name: Single compatibility job
+
+on:
+  workflow_call:
+    inputs:
+      rebar_version:
+        required: true
+        type: string
+    secrets:
+      CODECOV_TOKEN:
+        required: true
+
+jobs:
+  test:
+    name: "Erlang/OTP ${{ matrix.from_otp_version }} -> ${{ matrix.to_otp_version }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        from_otp_version: ['26', '27', '28', '29']
+        to_otp_version:   ['26', '27', '28', '29']
+        exclude:
+          - { from_otp_version: '26', to_otp_version: '26' }
+          - { from_otp_version: '27', to_otp_version: '27' }
+          - { from_otp_version: '28', to_otp_version: '28' }
+          - { from_otp_version: '29', to_otp_version: '29' }
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Erlang/OTP ${{ matrix.from_otp_version }}
+        uses: erlef/setup-beam@v1
+        id: install-erlang-1
+        with:
+          otp-version: ${{ matrix.from_otp_version }}
+          rebar3-version: ${{ inputs.rebar_version }}
+
+      - name: Record Erlang/OTP installed version (1)
+        run: erl -noinput -eval 'io:format("~s~n", [erlang:system_info(otp_release)]), halt().' > erlang-version-1.txt
+
+      - name: Compile with Erlang/OTP ${{ matrix.from_otp_version }}
+        run: rebar3 compile
+
+      - name: Generate module
+        run: ./.github/workflows/compatibility_test.escript generate standalone_function.bin
+
+      - name: Clean workspace
+        run: |
+          rm -rf ./_build
+
+          rm -rf ~/.cache/rebar3
+          rm -rf ~/work/_temp/.setup-beam
+
+      - name: Install Erlang/OTP ${{ matrix.to_otp_version }}
+        uses: erlef/setup-beam@v1
+        id: install-erlang-2
+        with:
+          otp-version: ${{ matrix.to_otp_version }}
+          rebar3-version: ${{ inputs.rebar_version }}
+
+      - name: Record Erlang/OTP installed version (2)
+        run: erl -noinput -eval 'io:format("~s~n", [erlang:system_info(otp_release)]), halt().' > erlang-version-2.txt
+
+      - name: Ensure second Erlang/OTP version differs from first
+        run: |
+          set -x
+          ! diff -u erlang-version-1.txt erlang-version-2.txt
+          ! cmp -s erlang-version-1.txt erlang-version-2.txt
+
+      - name: Compile with Erlang/OTP ${{ matrix.to_otp_version }}
+        run: rebar3 compile
+
+      - name: Run generated module
+        run: ./.github/workflows/compatibility_test.escript run standalone_function.bin

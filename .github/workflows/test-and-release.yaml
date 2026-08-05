@@ -67,12 +67,22 @@ jobs:
       - name: Dialyzer
         run: rebar3 clean && rebar3 as test dialyzer
 
+  compatibility:
+    name: Compatibility test
+    needs: env_to_output
+    uses: ./.github/workflows/compatibility-job.yaml
+    with:
+      rebar_version: ${{ needs.env_to_output.outputs.REBAR_VERSION }}
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   build_docs:
     name: Generate docs
     runs-on: ubuntu-latest
     needs:
       - test
       - dialyzer
+      - compatibility
 
     steps:
       - uses: actions/checkout@v6
@@ -125,6 +135,7 @@ jobs:
     needs:
       - test
       - dialyzer
+      - compatibility
       - build_docs
     if: github.repository == 'rabbitmq/horus' && (startsWith(github.ref, 'refs/tags/v0') || startsWith(github.ref, 'refs/tags/v1') || startsWith(github.ref, 'refs/tags/v2') || startsWith(github.ref, 'refs/tags/v3') || startsWith(github.ref, 'refs/tags/v4') || startsWith(github.ref, 'refs/tags/v5') || startsWith(github.ref, 'refs/tags/v6') || startsWith(github.ref, 'refs/tags/v7') || startsWith(github.ref, 'refs/tags/v8') || startsWith(github.ref, 'refs/tags/v9'))
 
