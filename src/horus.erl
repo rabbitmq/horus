@@ -763,11 +763,12 @@ should_generate_module_info_functions(#state{options = Options}) ->
     maps:get(add_module_info, Options, true).
 
 -spec compile(Input) -> Beam when
-      Input :: AbstractCode | Asm,
+      Input :: AbstractCode | Asm | CoreErlang,
       %% `AbstractCode' should be `compile:abstract_code/0' but it's not
       %% exported.
       AbstractCode :: [erl_parse:abstract_form()],
       Asm :: asm(),
+      CoreErlang :: cerl:c_module(),
       Beam :: binary().
 
 compile(Input) ->
@@ -780,6 +781,9 @@ compile(asm, Input) ->
     do_compile(Asm, CompilerOptions);
 compile(abstract_code, Input) ->
     CompilerOptions = [warnings_as_errors],
+    do_compile(Input, CompilerOptions);
+compile(core_erlang, Input) ->
+    CompilerOptions = [from_core],
     do_compile(Input, CompilerOptions).
 
 do_compile(Input, CompilerOptions) ->
@@ -814,10 +818,15 @@ determine_input_type({Module, Exports, Attributes, Anno, Functions, Labels})
 determine_input_type(Input) when is_list(Input) ->
     abstract_code;
 determine_input_type(Input) ->
-    ?horus_misuse(
-       compilation_failure,
-       #{error => unknown_input_type,
-         input => Input}).
+    case cerl:is_c_module(Input) of
+        true ->
+            core_erlang;
+        false ->
+            ?horus_misuse(
+               compilation_failure,
+               #{error => unknown_input_type,
+                 input => Input})
+    end.
 
 adapt_asm_to_native_records(Asm) when size(Asm) =:= 5 ->
     case does_compiler_support_native_records() of
@@ -882,11 +891,11 @@ handle_compilation_error(
      [{beam_validator, ValidationFailure} | _Rest]}],
    []} = Error) ->
     handle_validation_error(Asm, ValidationFailure, Error);
-handle_compilation_error(Asm, Error) ->
+handle_compilation_error(Input, Error) ->
     ?horus_misuse(
        compilation_failure,
        #{error => Error,
-         asm => Asm}).
+         input => Input}).
 
 handle_validation_error(
   Asm,
