@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        otp_version: ['26', '27', '28']
+        otp_version: ['26', '27', '28', '29']
         os: [ubuntu-latest, windows-latest]
 
     steps:
@@ -52,7 +52,7 @@ jobs:
         run: rebar3 as test covertool generate
 
       - name: Upload code coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: _build/test/covertool/horus.covertool.xml
