@@ -9,10 +9,22 @@
 -module(horus_cerl).
 
 -include_lib("kernel/include/logger.hrl").
--include_lib("stdlib/include/assert.hrl").
 
 -export([get/1,
          format/1]).
+
+%% -------------------------------------------------------------------
+%% get/1.
+%% -------------------------------------------------------------------
+
+-spec get(Fun | MFA) -> CoreErlang when
+      Fun :: fun(),
+      MFA :: {Module, Name, Arity},
+      Module :: module(),
+      Name :: atom(),
+      Arity :: non_neg_integer(),
+      CoreErlang :: cerl:cerl().
+%% @doc Returns the Core Erlang code of the given function of MFA.
 
 get(Fun) when is_function(Fun) ->
     FunInfo = horus_erlfun_utils:info(Fun),
@@ -20,12 +32,18 @@ get(Fun) when is_function(Fun) ->
       name := Name,
       arity := Arity,
       type := Type} = FunInfo,
+    ?LOG_DEBUG(
+       "Horus: get Core Erlang for function ~s:~s/~b",
+       [Module, Name, Arity]),
     AbstractCode = horus_beam_utils:get_abstract_code(Module),
     case Type of
         local    -> do_get(Fun, {Name, Arity}, AbstractCode);
         external -> do_get({Module, Name, Arity}, {Name, Arity}, AbstractCode)
     end;
 get({Module, Name, Arity} = MFA) ->
+    ?LOG_DEBUG(
+       "Horus: get Core Erlang for function ~s:~s/~b",
+       [Module, Name, Arity]),
     AbstractCode = horus_beam_utils:get_abstract_code(Module),
     do_get(MFA, {Name, Arity}, AbstractCode).
 
@@ -41,8 +59,6 @@ do_get(Reference, Target, AbstractCode) ->
     do_get1(Reference, Target, ModuleCoreErlang).
 
 do_get1(Reference, Target, ModuleCoreErlang) when is_function(Reference) ->
-    % io:format(standard_error, "Get ~0p~n", [Reference]),
-    % ?LOG_ALERT("Module Core Erlang: ~p", [ModuleCoreErlang]),
     PreCallback = fun(Node, _Fold, undefined = Priv) ->
                           case cerl:type(Node) of
                               'fun' ->
@@ -66,7 +82,6 @@ do_get1(Reference, Target, ModuleCoreErlang) when is_function(Reference) ->
             {ok, FunCoreErlang}
     end;
 do_get1(Reference, Target, ModuleCoreErlang) when is_tuple(Reference) ->
-    % ?LOG_ALERT("Module Core Erlang: ~p", [ModuleCoreErlang]),
     PreCallback = fun(Node, _Fold, undefined = Priv) ->
                           case cerl:type(Node) of
                               module ->
@@ -101,6 +116,10 @@ find_ref([{Var, FunCoreErlang} | Rest], Target) ->
     end;
 find_ref([], _Target) ->
     undefined.
+
+%% -------------------------------------------------------------------
+%% Other APIs.
+%% -------------------------------------------------------------------
 
 format(CoreErlang) ->
     Txt = core_pp:format(CoreErlang),

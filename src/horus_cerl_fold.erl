@@ -36,6 +36,63 @@
                matching = false,
                depth = 0}).
 
+-opaque state() :: #fold{}.
+
+-type callback_priv() :: any().
+
+-type pre_callback_ret() :: {in,
+                             NewPriv :: horus_cerl_fold:callback_priv()} |
+                            {in,
+                             NewNode :: cerl:cerl(),
+                             NewPriv :: horus_cerl_fold:callback_priv()} |
+                            {next,
+                             NewPriv :: horus_cerl_fold:callback_priv()} |
+                            {next,
+                             NewNode :: cerl:cerl(),
+                             NewPriv :: horus_cerl_fold:callback_priv()} |
+                            {stop,
+                             NewPriv :: horus_cerl_fold:callback_priv()}.
+
+-type pre_callback() :: fun((Node :: cerl:cerl(),
+                             Fold :: horus_cerl_fold:state(),
+                             Priv :: any()) ->
+                          Ret :: horus_cerl_fold:pre_callback_ret()).
+
+-type post_callback_ret() :: {ok,
+                              NewPriv :: horus_cerl_fold:callback_priv()} |
+                             {ok,
+                              NewNode :: cerl:cerl(),
+                              NewPriv :: horus_cerl_fold:callback_priv()} |
+                             {abort,
+                              NewPriv :: horus_cerl_fold:callback_priv()}.
+
+-type post_callback() :: fun((Node :: cerl:cerl(),
+                              Fold :: horus_cerl_fold:state(),
+                              Priv :: any()) ->
+                          Ret :: horus_cerl_fold:post_callback_ret()).
+
+-export_type([cerl_ctype/0,
+              state/0,
+              pre_callback/0,
+              pre_callback_ret/0,
+              post_callback/0,
+              post_callback_ret/0,
+              callback_priv/0]).
+
+%% -------------------------------------------------------------------
+%% Folding code.
+%% -------------------------------------------------------------------
+
+-spec fold(Node, PreCallback, PostCallback, Priv) -> Ret when
+      Node :: cerl:cerl(),
+      PreCallback :: horus_cerl_fold:pre_callback() | none,
+      PostCallback :: horus_cerl_fold:post_callback() | none,
+      Priv :: any(),
+      Ret :: {ok, NewNode, NewPriv} | {interrupted, NewPriv},
+      NewNode :: cerl:cerl(),
+      NewPriv :: any().
+%% @doc Walks through a Core Erlang node and its children.
+
 fold(Node, PreCallback, PostCallback, Priv) ->
     Fold = #fold{pre_callback = PreCallback,
                  post_callback = PostCallback,
