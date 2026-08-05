@@ -787,7 +787,13 @@ compile(Asm) when is_tuple(Asm) ->
                        warnings_as_errors,
                        return_errors,
                        return_warnings,
-                       deterministic],
+                       deterministic,
+
+                       %% We set undocumented compiler options to make sure the
+                       %% compiler generates a Beam module compatible with
+                       %% Erlang/OTP 26 and 27.
+                       no_long_atoms,
+                       compressed_literals],
     case compile:forms(Asm1, CompilerOptions) of
         {ok, _Module, Beam, []} -> Beam;
         Error                   -> handle_compilation_error(Asm, Error)
@@ -797,7 +803,13 @@ compile(AbstractCode) when is_list(AbstractCode) ->
                        warnings_as_errors,
                        return_errors,
                        return_warnings,
-                       deterministic],
+                       deterministic,
+
+                       %% We set undocumented compiler options to make sure the
+                       %% compiler generates a Beam module compatible with
+                       %% Erlang/OTP 26 and 27.
+                       no_long_atoms,
+                       compressed_literals],
     case compile:forms(AbstractCode, CompilerOptions) of
         {ok, _Module, Beam, []} -> Beam;
         Error                   -> handle_compilation_error(AbstractCode, Error)
