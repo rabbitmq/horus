@@ -762,8 +762,12 @@ extract_module_info_functions(State) ->
 should_generate_module_info_functions(#state{options = Options}) ->
     maps:get(add_module_info, Options, true).
 
--spec compile(Asm) -> Beam when
-      Asm :: asm(), %% FIXME: compile:forms/2 is incorrectly specified.
+-spec compile(Input) -> Beam when
+      Input :: AbstractCode | Asm,
+      %% `AbstractCode' should be `compile:abstract_code/0' but it's not
+      %% exported.
+      AbstractCode :: [erl_parse:abstract_form()],
+      Asm :: asm(),
       Beam :: binary().
 
 compile(Asm) when is_tuple(Asm) ->
@@ -794,6 +798,8 @@ compile(Asm) when is_tuple(Asm) ->
                        %% Erlang/OTP 26 and 27.
                        no_long_atoms,
                        compressed_literals],
+    %% FIXME: compile:forms/2 is incorrectly specified: the fact is takes
+    %% assembly is undocumented.
     case compile:forms(Asm1, CompilerOptions) of
         {ok, _Module, Beam, []} -> Beam;
         Error                   -> handle_compilation_error(Asm, Error)
