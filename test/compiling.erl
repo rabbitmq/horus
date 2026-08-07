@@ -14,7 +14,9 @@
 -include("src/horus_fun.hrl").
 -include("test/helpers.hrl").
 
--dialyzer({nowarn_function, [can_compile_asm_test/0]}).
+-dialyzer({nowarn_function, [can_compile_asm_test/0,
+                             fails_to_compile_invalid_asm_test/0,
+                             fails_to_compile_invalid_core_erlang_test/0]}).
 
 can_compile_asm_test() ->
     Mod = arbitrary_mod,
@@ -48,11 +50,44 @@ can_compile_asm_test() ->
         end
     after
         _ = file:delete(AsmFile)
-    end,
+    end.
 
+fails_to_compile_invalid_asm_test() ->
     ?assertError(
        ?horus_exception(compilation_failure, #{}),
        horus:compile({a, b, c, d, e})).
+
+can_compile_core_erlang_test() ->
+    Mod = arbitrary_mod,
+    CompileInfo = Mod:module_info(compile),
+    SrcFile = proplists:get_value(source, CompileInfo),
+
+    CompilerOptions = [binary, dcore],
+    {ok, Mod, CoreErlang} = compile:file(SrcFile, CompilerOptions),
+
+    ?assert(cerl:is_c_module(CoreErlang)),
+    Beam = horus:compile(CoreErlang),
+    ?assertMatch(_ when is_binary(Beam), Beam),
+
+    Fun = fun Mod:run/0,
+    StandaloneFun0 = horus:to_standalone_fun(Fun),
+    StandaloneFun1 = StandaloneFun0#horus_fun{module = Mod,
+                                              beam = Beam},
+
+    _ = code:delete(Mod),
+    _ = code:purge(Mod),
+    ?assertNot(horus_utils:is_module_loaded(Mod)),
+    ?assertNot(horus:is_standalone_fun_loaded(StandaloneFun1)),
+    try
+        ?assertMatch(yay, horus:exec(StandaloneFun1, []))
+    after
+        horus:unload_standalone_fun(StandaloneFun1)
+    end.
+
+fails_to_compile_invalid_core_erlang_test() ->
+    ?assertError(
+       ?horus_exception(compilation_failure, #{}),
+       horus:compile(cerl:abstract(some_atom))).
 
 can_compile_abtract_code_test() ->
     Mod = arbitrary_mod,
@@ -76,8 +111,9 @@ can_compile_abtract_code_test() ->
         ?assertMatch(yay, horus:exec(StandaloneFun1, []))
     after
         horus:unload_standalone_fun(StandaloneFun1)
-    end,
+    end.
 
+fails_to_compile_invalid_abstract_code_test() ->
     ?assertError(
        ?horus_exception(compilation_failure, #{}),
        horus:compile([])).

@@ -762,58 +762,91 @@ extract_module_info_functions(State) ->
 should_generate_module_info_functions(#state{options = Options}) ->
     maps:get(add_module_info, Options, true).
 
--spec compile(Asm) -> Beam when
-      Asm :: asm(), %% FIXME: compile:forms/2 is incorrectly specified.
+-spec compile(Input) -> Beam when
+      Input :: AbstractCode | Asm | CoreErlang,
+      %% `AbstractCode' should be `compile:abstract_code/0' but it's not
+      %% exported.
+      AbstractCode :: [erl_parse:abstract_form()],
+      Asm :: asm(),
+      CoreErlang :: cerl:c_module(),
       Beam :: binary().
 
-compile(Asm) when is_tuple(Asm) ->
-    Asm1 = case does_compiler_support_native_records() of
-               true ->
-                   %% With the introduction of native records in Erlang/OTP 29,
-                   %% the format of the assembly tuple changed: it has a new
-                   %% element added to the fourth position, beam annotations.
-                   %%
-                   %% If the local compiler supports native records, we have to
-                   %% convert the 5-elements tuple to the 6-elements tuple with
-                   %% empty beam annotations.
-                   Anno = #{},
-                   {ModuleName, Exports, Attributes, Functions, Labels} = Asm,
-                   {ModuleName, Exports, Attributes, Anno, Functions, Labels};
-               false ->
-                   Asm
-           end,
-    CompilerOptions = [from_asm,
-                       binary,
-                       warnings_as_errors,
-                       return_errors,
-                       return_warnings,
-                       deterministic,
+compile(Input) ->
+    InputType = determine_input_type(Input),
+    compile(InputType, Input).
 
-                       %% We set undocumented compiler options to make sure the
-                       %% compiler generates a Beam module compatible with
-                       %% Erlang/OTP 26 and 27.
-                       no_long_atoms,
-                       compressed_literals],
-    case compile:forms(Asm1, CompilerOptions) of
-        {ok, _Module, Beam, []} -> Beam;
-        Error                   -> handle_compilation_error(Asm, Error)
-    end;
-compile(AbstractCode) when is_list(AbstractCode) ->
-    CompilerOptions = [binary,
-                       warnings_as_errors,
-                       return_errors,
-                       return_warnings,
-                       deterministic,
+compile(asm, Input) ->
+    Asm = adapt_asm_to_native_records(Input),
+    CompilerOptions = [from_asm, warnings_as_errors],
+    do_compile(Asm, CompilerOptions);
+compile(abstract_code, Input) ->
+    CompilerOptions = [warnings_as_errors],
+    do_compile(Input, CompilerOptions);
+compile(core_erlang, Input) ->
+    CompilerOptions = [from_core],
+    do_compile(Input, CompilerOptions).
 
-                       %% We set undocumented compiler options to make sure the
-                       %% compiler generates a Beam module compatible with
-                       %% Erlang/OTP 26 and 27.
-                       no_long_atoms,
-                       compressed_literals],
-    case compile:forms(AbstractCode, CompilerOptions) of
+do_compile(Input, CompilerOptions) ->
+    CommonCompilerOptions = [binary,
+                             return_errors,
+                             return_warnings,
+                             deterministic,
+
+                             %% We set undocumented compiler options to make
+                             %% sure the compiler generates a Beam module
+                             %% compatible with Erlang/OTP 26 and 27.
+                             no_long_atoms,
+                             compressed_literals],
+    CompilerOptions1 = CompilerOptions ++ CommonCompilerOptions,
+    %% FIXME: compile:forms/2 is incorrectly specified: the fact is takes
+    %% assembly is undocumented.
+    case compile:forms(Input, CompilerOptions1) of
         {ok, _Module, Beam, []} -> Beam;
-        Error                   -> handle_compilation_error(AbstractCode, Error)
+        Error                   -> handle_compilation_error(Input, Error)
     end.
+
+determine_input_type({Module, Exports, Attributes, Functions, Labels})
+  when is_atom(Module) andalso is_list(Exports) andalso
+       is_list(Attributes) andalso is_list(Functions) andalso
+       is_integer(Labels) ->
+    asm;
+determine_input_type({Module, Exports, Attributes, Anno, Functions, Labels})
+  when is_atom(Module) andalso is_list(Exports) andalso
+       is_list(Attributes) andalso is_map(Anno) andalso
+       is_list(Functions) andalso is_integer(Labels) ->
+    asm;
+determine_input_type(Input) when is_list(Input) ->
+    abstract_code;
+determine_input_type(Input) ->
+    case cerl:is_c_module(Input) of
+        true ->
+            core_erlang;
+        false ->
+            ?horus_misuse(
+               compilation_failure,
+               #{error => unknown_input_type,
+                 input => Input})
+    end.
+
+adapt_asm_to_native_records(Asm) when size(Asm) =:= 5 ->
+    case does_compiler_support_native_records() of
+        true ->
+            %% With the introduction of native records in
+            %% Erlang/OTP 29, the format of the assembly tuple
+            %% changed: it has a new element added to the fourth
+            %% position, beam annotations.
+            %%
+            %% If the local compiler supports native records, we
+            %% have to convert the 5-elements tuple to the
+            %% 6-elements tuple with empty beam annotations.
+            Anno = #{},
+            {ModuleName, Exports, Attributes, Functions, Labels} = Asm,
+            {ModuleName, Exports, Attributes, Anno, Functions, Labels};
+        false ->
+            Asm
+    end;
+adapt_asm_to_native_records(Asm) when size(Asm) =:= 6 ->
+    Asm.
 
 does_compiler_support_native_records() ->
     Vsn = get_compiler_version(),
@@ -858,11 +891,11 @@ handle_compilation_error(
      [{beam_validator, ValidationFailure} | _Rest]}],
    []} = Error) ->
     handle_validation_error(Asm, ValidationFailure, Error);
-handle_compilation_error(Asm, Error) ->
+handle_compilation_error(Input, Error) ->
     ?horus_misuse(
        compilation_failure,
        #{error => Error,
-         asm => Asm}).
+         input => Input}).
 
 handle_validation_error(
   Asm,
@@ -871,11 +904,8 @@ handle_validation_error(
     CallIndex,
     no_bs_start_match2}},
   Error) when Call =:= call orelse Call =:= call_only ->
-    {_GeneratedModuleName,
-     _Exports,
-     _Attributes,
-     Functions,
-     _Labels} = Asm,
+    FunctionsPos = size(Asm) - 1,
+    Functions = element(FunctionsPos, Asm),
     #function{code = Instructions} = find_function(
                                        Functions, Module, Name, Arity),
     Comments = find_comments_in_branch(Instructions, CallIndex),
@@ -969,19 +999,12 @@ find_comments_in_branch(
 
 add_comments_and_retry(
   Asm, Error, FailingFun, Location, Comments) ->
-    {GeneratedModuleName,
-     Exports,
-     Attributes,
-     Functions,
-     Labels} = Asm,
+    FunctionsPos = size(Asm) - 1,
+    Functions = element(FunctionsPos, Asm),
     try
         Functions1 = add_comments_to_function(
                        Functions, FailingFun, Location, Comments, []),
-        Asm1 = {GeneratedModuleName,
-                Exports,
-                Attributes,
-                Functions1,
-                Labels},
+        Asm1 = setelement(FunctionsPos, Asm, Functions1),
         compile(Asm1)
     catch
         throw:duplicate_annotations ->
