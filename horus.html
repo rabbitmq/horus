@@ -65,10 +65,18 @@ to older runtimes.</p>
 <h2><a name="types">Data Types</a></h2>
 
 <h3 class="typedecl"><a name="type-asm">asm()</a></h3>
-<p><code>asm() = {module(), [{atom(), arity()}], [], [#function{name = atom(), arity = byte(), entry = <a href="/home/runner/work/horus/stdlib/doc/beam_lib.html#type-label" docgen-rel="seetype" docgen-href="stdlib:beam_lib#label/0">beam_lib:label()</a>, code = [<a href="#type-beam_instr" docgen-rel="seetype" docgen-href="#beam_instr/0">beam_instr()</a>]}], <a href="#type-label" docgen-rel="seetype" docgen-href="#label/0">label()</a>}</code></p>
+<p><code>asm() = <a href="#type-asm_erlang28" docgen-rel="seetype" docgen-href="#asm_erlang28/0">asm_erlang28()</a> | <a href="#type-asm_erlang29" docgen-rel="seetype" docgen-href="#asm_erlang29/0">asm_erlang29()</a></code></p>
 <p><p>  The assembly form passed to the compiler.</p>
  
   It should be exported by the compiler application ideally.</p>
+
+<h3 class="typedecl"><a name="type-asm_erlang28">asm_erlang28()</a></h3>
+<p><code>asm_erlang28() = {module(), [{atom(), arity()}], [], [#function{name = atom(), arity = byte(), entry = <a href="/home/runner/work/horus/stdlib/doc/beam_lib.html#type-label" docgen-rel="seetype" docgen-href="stdlib:beam_lib#label/0">beam_lib:label()</a>, code = [<a href="#type-beam_instr" docgen-rel="seetype" docgen-href="#beam_instr/0">beam_instr()</a>]}], <a href="#type-label" docgen-rel="seetype" docgen-href="#label/0">label()</a>}</code></p>
+
+
+<h3 class="typedecl"><a name="type-asm_erlang29">asm_erlang29()</a></h3>
+<p><code>asm_erlang29() = {module(), [{atom(), arity()}], [], #{}, [#function{name = atom(), arity = byte(), entry = <a href="/home/runner/work/horus/stdlib/doc/beam_lib.html#type-label" docgen-rel="seetype" docgen-href="stdlib:beam_lib#label/0">beam_lib:label()</a>, code = [<a href="#type-beam_instr" docgen-rel="seetype" docgen-href="#beam_instr/0">beam_instr()</a>]}], <a href="#type-label" docgen-rel="seetype" docgen-href="#label/0">label()</a>}</code></p>
+
 
 <h3 class="typedecl"><a name="type-beam_instr">beam_instr()</a></h3>
 <p><code>beam_instr() = atom() | tuple()</code></p>
