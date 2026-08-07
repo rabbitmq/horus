@@ -14,7 +14,8 @@
 -include("src/horus_fun.hrl").
 -include("test/helpers.hrl").
 
--dialyzer({nowarn_function, [fails_to_compile_invalid_asm_test/0,
+-dialyzer({nowarn_function, [can_compile_asm_test/0,
+                             fails_to_compile_invalid_asm_test/0,
                              fails_to_compile_invalid_core_erlang_test/0]}).
 
 can_compile_asm_test() ->

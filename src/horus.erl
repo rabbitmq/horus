@@ -91,6 +91,8 @@
 %% The following basically disables Dialyzer for this module unfortunately...
 %% This can be removed once we start using Erlang 25 to run Dialyzer.
 -dialyzer({nowarn_function, [compile/1,
+                             compile/2,
+                             do_compile/2,
                              to_standalone_fun/1,
                              to_standalone_fun/2,
                              to_standalone_fun1/2,
@@ -312,11 +314,20 @@ fun((#{calls := #{Call :: mfa() => true},
                 errors = [] :: [any()],
                 options = #{} :: options()}).
 
--type asm() :: {module(),
-                [{atom(), arity()}],
-                [],
-                [#function{}],
-                label()}.
+-type asm_erlang28() :: {module(),
+                         [{atom(), arity()}],
+                         [],
+                         [#function{}],
+                         label()}.
+
+-type asm_erlang29() :: {module(),
+                         [{atom(), arity()}],
+                         [],
+                         #{},
+                         [#function{}],
+                         label()}.
+
+-type asm() :: asm_erlang28() | asm_erlang29().
 %% The assembly form passed to the compiler.
 %%
 %% It should be exported by the compiler application ideally.
@@ -786,6 +797,16 @@ compile(core_erlang, Input) ->
     CompilerOptions = [from_core],
     do_compile(Input, CompilerOptions).
 
+-spec do_compile(Input, CompilerOptions) -> Beam when
+      Input :: AbstractCode | Asm | CoreErlang,
+      %% `AbstractCode' should be `compile:abstract_code/0' but it's not
+      %% exported.
+      AbstractCode :: [erl_parse:abstract_form()],
+      Asm :: asm(),
+      CoreErlang :: cerl:c_module(),
+      CompilerOptions :: [compile:option()],
+      Beam :: binary().
+
 do_compile(Input, CompilerOptions) ->
     CommonCompilerOptions = [binary,
                              return_errors,
@@ -798,7 +819,7 @@ do_compile(Input, CompilerOptions) ->
                              no_long_atoms,
                              compressed_literals],
     CompilerOptions1 = CompilerOptions ++ CommonCompilerOptions,
-    %% FIXME: compile:forms/2 is incorrectly specified: the fact is takes
+    %% FIXME: compile:forms/2 is incorrectly specified: the fact it takes
     %% assembly is undocumented.
     case compile:forms(Input, CompilerOptions1) of
         {ok, _Module, Beam, []} -> Beam;
@@ -2361,7 +2382,7 @@ add_function(
 
 -spec file_asm_to_compiler_asm(FileAsm) -> CompilerAsm when
       FileAsm :: [any()] | asm(),
-      CompilerAsm :: asm().
+      CompilerAsm :: asm_erlang28().
 
 file_asm_to_compiler_asm(FileAsm) ->
     BeamFileRecordExt = asm_to_beam_file_record(FileAsm),
