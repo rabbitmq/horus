@@ -1001,12 +1001,12 @@ find_comments_in_branch(
       end, [], VarInfos);
 find_comments_in_branch(
   [{'%', {var_info, Var, Info}} | Rest], Index, Counter, VarInfos) ->
-    VarInfos1 = maps:put(Var, Info, VarInfos),
+    VarInfos1 = VarInfos#{Var => Info},
     find_comments_in_branch(Rest, Index, Counter + 1, VarInfos1);
 find_comments_in_branch(
   [{move, Src, Dst} | Rest], Index, Counter, VarInfos) ->
     VarInfos1 = case VarInfos of
-                    #{Src := Info} -> maps:put(Dst, Info, VarInfos);
+                    #{Src := Info} -> VarInfos#{Dst => Info};
                     _              -> maps:remove(Dst, VarInfos)
                 end,
     VarInfos2 = maps:remove(Src, VarInfos1),
