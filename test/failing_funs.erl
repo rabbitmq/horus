@@ -21,7 +21,7 @@ throw_test() ->
                           throw(failure)
                       end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertThrow(failure, horus:exec(StandaloneFun, [])).
+    ?assertThrow(failure, helpers:horus_exec(StandaloneFun, [])).
 
 error_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -29,7 +29,7 @@ error_test() ->
                           error(failure)
                       end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertError(failure, horus:exec(StandaloneFun, [])).
+    ?assertError(failure, helpers:horus_exec(StandaloneFun, [])).
 
 exit_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -37,7 +37,7 @@ exit_test() ->
                           exit(failure)
                       end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertExit(failure, horus:exec(StandaloneFun, [])).
+    ?assertExit(failure, helpers:horus_exec(StandaloneFun, [])).
 
 stacktrace_test() ->
     Fun = fun() -> failing_fun() end,
@@ -50,7 +50,7 @@ stacktrace_test() ->
                           Stacktrace
                   end,
     try
-        horus:exec(StandaloneFun, [])
+        helpers:horus_exec(StandaloneFun, [])
     catch
         error:failure:Stacktrace2 ->
             %% When comparing the stacktraces, we only consider the part
@@ -60,7 +60,7 @@ stacktrace_test() ->
             %%
             %% For `Stacktrace1', we will stop before the frame calling the
             %% anonymous function (i.e. this test function). For
-            %% `Stacktrace2', we will stop before the `horus:exec/2' call.
+            %% `Stacktrace2', we will stop before the `helpers:horus_exec/2' call.
             Pred = fun({Module, Name, _, _}) ->
                            Module =:= ?MODULE andalso
                            Name =/= ?FUNCTION_NAME

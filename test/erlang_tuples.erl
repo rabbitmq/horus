@@ -20,7 +20,7 @@ select_tuple_arity_var_info_test() ->
                            handle_tuple(Tuple)
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(true, horus:exec(StandaloneFun, [])).
+    ?assertEqual(true, helpers:horus_exec(StandaloneFun, [])).
 
 make_tuple([A]) ->
     {a, A};

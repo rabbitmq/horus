@@ -21,7 +21,7 @@ concat_binaries_test() ->
     StandaloneFun = ?make_standalone_fun(
                        <<Bin/binary, "_", Bin/binary, "_", Bin/binary>>),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(<<"a_a_a">>, horus:exec(StandaloneFun, [])).
+    ?assertEqual(<<"a_a_a">>, helpers:horus_exec(StandaloneFun, [])).
 
 bs_match_test() ->
     List = [{'apply-to', <<"queues">>}],
@@ -32,7 +32,7 @@ bs_match_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 matches_type(exchange, <<"exchanges">>) -> true;
 matches_type(queue,    <<"queues">>)    -> true;
@@ -47,7 +47,7 @@ bitstring_init_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 encode_integer(Length) ->
     <<Length:7/integer>>.
@@ -60,7 +60,7 @@ bs_match_1_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 parse_date(
   <<Year:4/bytes, $-, Month:2/bytes, $-, Day:2/bytes, _Rest/binary>>) ->
@@ -74,7 +74,7 @@ bs_match_2_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 parse_float(<<".", Rest/binary>>) ->
     parse_digits(Rest);
@@ -119,7 +119,7 @@ bs_match_3_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 %% The compiler determines that this clause will always match because this
 %% function is not exported and is only called with a compile-time binary
@@ -151,7 +151,7 @@ bs_match_accepts_match_context_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 bs_get_float_test() ->
     FloatBin = helpers:ensure_not_optimized(<<3.14/float>>),
@@ -161,7 +161,7 @@ bs_get_float_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 match_float(<<Float/float>>) ->
     Float.
@@ -178,7 +178,7 @@ type_inference_for_test_arity_instruction_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 encode_frame(Frame)
     when is_tuple(Frame) andalso
@@ -202,7 +202,7 @@ bit_string_comprehension_expression_test() ->
     ?assertEqual(
        <<<<(Part bxor Mask):32/integer>>
          || <<Part:32/integer>> <= Data>>,
-       horus:exec(StandaloneFun, [])).
+       helpers:horus_exec(StandaloneFun, [])).
 
 bitstring_flags_test() ->
     LittleSignedBin = helpers:ensure_not_optimized(
@@ -225,7 +225,7 @@ bitstring_flags_test() ->
                       {big_unsigned, BigUnsignedBin})}
                end),
     ?assertStandaloneFun(Decode),
-    ?assertEqual({-42, 42, -42, 42}, horus:exec(Decode, [])).
+    ?assertEqual({-42, 42, -42, 42}, helpers:horus_exec(Decode, [])).
 
 match_bitstring_flags(
   {little_signed, <<N:4/little-signed-integer-unit:8>>}) ->

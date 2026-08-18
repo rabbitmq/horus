@@ -20,7 +20,7 @@ match_test() ->
                            Value
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(b, horus:exec(StandaloneFun, [])).
+    ?assertEqual(b, helpers:horus_exec(StandaloneFun, [])).
 
 update_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -29,4 +29,4 @@ update_test() ->
                            Map#{a => c}
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(#{a => c}, horus:exec(StandaloneFun, [])).
+    ?assertEqual(#{a => c}, helpers:horus_exec(StandaloneFun, [])).

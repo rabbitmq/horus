@@ -21,4 +21,4 @@ erl_eval_test() ->
     {ok, Exprs} = erl_parse:parse_exprs(Tokens),
     {value, StandaloneFun, _NewBindings} = erl_eval:exprs(Exprs, Bindings),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(2, horus:exec(StandaloneFun, [-2])).
+    ?assertEqual(2, helpers:horus_exec(StandaloneFun, [-2])).

@@ -44,7 +44,7 @@ can_compile_asm_test() ->
         ?assertNot(horus_utils:is_module_loaded(Mod)),
         ?assertNot(horus:is_standalone_fun_loaded(StandaloneFun1)),
         try
-            ?assertMatch(yay, horus:exec(StandaloneFun1, []))
+            ?assertMatch(yay, helpers:horus_exec(StandaloneFun1, []))
         after
              horus:unload_standalone_fun(StandaloneFun1)
         end
@@ -79,7 +79,7 @@ can_compile_core_erlang_test() ->
     ?assertNot(horus_utils:is_module_loaded(Mod)),
     ?assertNot(horus:is_standalone_fun_loaded(StandaloneFun1)),
     try
-        ?assertMatch(yay, horus:exec(StandaloneFun1, []))
+        ?assertMatch(yay, helpers:horus_exec(StandaloneFun1, []))
     after
         horus:unload_standalone_fun(StandaloneFun1)
     end.
@@ -108,7 +108,7 @@ can_compile_abtract_code_test() ->
     ?assertNot(horus_utils:is_module_loaded(Mod)),
     ?assertNot(horus:is_standalone_fun_loaded(StandaloneFun1)),
     try
-        ?assertMatch(yay, horus:exec(StandaloneFun1, []))
+        ?assertMatch(yay, helpers:horus_exec(StandaloneFun1, []))
     after
         horus:unload_standalone_fun(StandaloneFun1)
     end.
