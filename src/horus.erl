@@ -1135,9 +1135,7 @@ exec(
     %% We also need to load any literal functions referenced by the standalone
     %% function and extracted with it. The assembly code already references
     %% them.
-    lists:foreach(
-      fun(LiteralFun) -> load_standalone_fun(LiteralFun) end,
-      LiteralFuns),
+    lists:foreach(fun load_standalone_fun/1, LiteralFuns),
     Env1 = to_actual_arg(Env),
     try
         erlang:apply(Module, ?SF_ENTRYPOINT, Args ++ Env1)
