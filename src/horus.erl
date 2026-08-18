@@ -1085,16 +1085,18 @@ merge_comments(Comments, ExistingComments) ->
                             fun({'%', {var_info, Var, Info}}, #{} = Acc) ->
                                     Acc#{Var => Info}
                             end, #{}, ExistingComments),
-    lists:map(fun({'%', {var_info, Var, Info}} = Annotation) ->
-        case ExistingCommentsMap of
-          #{Var := Info} ->
-              throw(duplicate_annotations);
-          #{Var := ExistingInfo} ->
-              {'%', {var_info, Var, Info ++ ExistingInfo}};
-          _ ->
-              Annotation
-        end
-    end, Comments).
+    [begin
+         {'%', {var_info, Var, Info}} = Annotation,
+         case ExistingCommentsMap of
+             #{Var := Info} ->
+                 throw(duplicate_annotations);
+             #{Var := ExistingInfo} ->
+                 true = is_list(ExistingInfo),
+                 {'%', {var_info, Var, Info ++ ExistingInfo}};
+             _ ->
+                 Annotation
+         end
+     end || Annotation <- Comments].
 
 -spec exec(StandaloneFun, Args) -> Ret when
       StandaloneFun :: horus_fun(),
@@ -3354,10 +3356,7 @@ to_actual_arg(#horus_fun{arity = Arity} = StandaloneFun) ->
                #{arity => Arity})
     end;
 to_actual_arg(List) when is_list(List) ->
-    lists:map(
-      fun(Item) ->
-              to_actual_arg(Item)
-      end, List);
+    [to_actual_arg(Item) || Item <- List];
 to_actual_arg(Tuple) when is_tuple(Tuple) ->
     List0 = tuple_to_list(Tuple),
     List1 = to_actual_arg(List0),
