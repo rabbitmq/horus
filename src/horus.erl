@@ -56,7 +56,6 @@
 
 -module(horus).
 
--include_lib("kernel/include/logger.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
 -include("include/horus.hrl").
