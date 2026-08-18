@@ -1043,13 +1043,13 @@ add_comments_to_function(
   Location, Comments, Result) ->
     Code1 = add_comments_to_code(Code, Location, Comments),
     Function1 = Function#function{code = Code1},
-    lists:reverse(Result) ++ [Function1 | Rest];
+    lists:reverse(Result, [Function1 | Rest]);
 add_comments_to_function(
   [#function{entry = EntryLabel, code = Code} = Function | Rest],
   EntryLabel, Location, Comments, Result) ->
     Code1 = add_comments_to_code(Code, Location, Comments),
     Function1 = Function#function{code = Code1},
-    lists:reverse(Result) ++ [Function1 | Rest];
+    lists:reverse(Result, [Function1 | Rest]);
 add_comments_to_function(
   [Function | Rest], FailingFun, Location, Comments, Result) ->
     add_comments_to_function(
@@ -1062,12 +1062,12 @@ add_comments_to_code(
   [Instruction | Rest], {before, Instruction}, Comments, Result) ->
     {ExistingComments, Result1} = split_comments(Result),
     Comments1 = merge_comments(Comments, ExistingComments),
-    lists:reverse(Result1) ++ Comments1 ++ [Instruction | Rest];
+    lists:reverse(Result1, Comments1 ++ [Instruction | Rest]);
 add_comments_to_code(
   [Instruction | Rest], {'after', Instruction}, Comments, Result) ->
     {ExistingComments, Rest1} = split_comments(Rest),
     Comments1 = merge_comments(Comments, ExistingComments),
-    lists:reverse(Result) ++ [Instruction | Comments1] ++ Rest1;
+    lists:reverse(Result, [Instruction | Comments1] ++ Rest1);
 add_comments_to_code(
   [Instruction | Rest], Location, Comments, Result) ->
     add_comments_to_code(Rest, Location, Comments, [Instruction | Result]).
