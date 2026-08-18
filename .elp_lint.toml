@@ -1,0 +1,19 @@
+# Risk of Atoms Exhaustion.
+[linters.W0023]
+enabled = false
+
+# Old EDoc Syntax.
+[linters.W0038]
+enabled = false
+
+# Avoid -dialyzer attribute.
+[linters.W0048]
+enabled = false
+
+# Avoid using the size/1 BIF.
+[linters.W0050]
+enabled = false
+
+# eqwalizer:ignore error suppression.
+[linters.W0074]
+enabled = false

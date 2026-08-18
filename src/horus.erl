@@ -56,7 +56,6 @@
 
 -module(horus).
 
--include_lib("kernel/include/logger.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
 -include("include/horus.hrl").
@@ -654,9 +653,9 @@ get_cached_standalone_fun(
             %% options.
             SameModules = maps:fold(
                             fun
-                                (Mod, Checksum, true) ->
+                                (Mod, Checksum, true) when is_atom(Mod) ->
                                     Checksum =:= Mod:module_info(md5);
-                                (_Module, _Checksum, false) ->
+                                (Mod, _Checksum, false) when is_atom(Mod) ->
                                     false
                             end, true, Checksums),
 
@@ -682,9 +681,9 @@ get_cached_standalone_fun(_State) ->
     %% TODO: Can we cache them?
     undefined.
 
--spec cache_standalone_fun(StandaloneFun, State) -> ok when
-      StandaloneFun :: horus_fun() | fun_kept,
-      State :: #state{}.
+-spec cache_standalone_fun(State, StandaloneFun) -> ok when
+      State :: #state{},
+      StandaloneFun :: horus_fun() | fun_kept.
 %% @private
 
 cache_standalone_fun(
@@ -996,15 +995,18 @@ find_comments_in_branch(Instructions, Index) ->
 
 find_comments_in_branch(
   _Instructions, Index, Index, VarInfos) ->
-    [{'%', {var_info, Var, Info}} || {Var, Info} <- maps:to_list(VarInfos)];
+    maps:fold(
+      fun(Var, Info, Acc) when is_list(Acc) ->
+              [{'%', {var_info, Var, Info}} | Acc]
+      end, [], VarInfos);
 find_comments_in_branch(
   [{'%', {var_info, Var, Info}} | Rest], Index, Counter, VarInfos) ->
-    VarInfos1 = maps:put(Var, Info, VarInfos),
+    VarInfos1 = VarInfos#{Var => Info},
     find_comments_in_branch(Rest, Index, Counter + 1, VarInfos1);
 find_comments_in_branch(
   [{move, Src, Dst} | Rest], Index, Counter, VarInfos) ->
     VarInfos1 = case VarInfos of
-                    #{Src := Info} -> maps:put(Dst, Info, VarInfos);
+                    #{Src := Info} -> VarInfos#{Dst => Info};
                     _              -> maps:remove(Dst, VarInfos)
                 end,
     VarInfos2 = maps:remove(Src, VarInfos1),
@@ -1041,13 +1043,13 @@ add_comments_to_function(
   Location, Comments, Result) ->
     Code1 = add_comments_to_code(Code, Location, Comments),
     Function1 = Function#function{code = Code1},
-    lists:reverse(Result) ++ [Function1 | Rest];
+    lists:reverse(Result, [Function1 | Rest]);
 add_comments_to_function(
   [#function{entry = EntryLabel, code = Code} = Function | Rest],
   EntryLabel, Location, Comments, Result) ->
     Code1 = add_comments_to_code(Code, Location, Comments),
     Function1 = Function#function{code = Code1},
-    lists:reverse(Result) ++ [Function1 | Rest];
+    lists:reverse(Result, [Function1 | Rest]);
 add_comments_to_function(
   [Function | Rest], FailingFun, Location, Comments, Result) ->
     add_comments_to_function(
@@ -1060,12 +1062,12 @@ add_comments_to_code(
   [Instruction | Rest], {before, Instruction}, Comments, Result) ->
     {ExistingComments, Result1} = split_comments(Result),
     Comments1 = merge_comments(Comments, ExistingComments),
-    lists:reverse(Result1) ++ Comments1 ++ [Instruction | Rest];
+    lists:reverse(Result1, Comments1 ++ [Instruction | Rest]);
 add_comments_to_code(
   [Instruction | Rest], {'after', Instruction}, Comments, Result) ->
     {ExistingComments, Rest1} = split_comments(Rest),
     Comments1 = merge_comments(Comments, ExistingComments),
-    lists:reverse(Result) ++ [Instruction | Comments1] ++ Rest1;
+    lists:reverse(Result, [Instruction | Comments1] ++ Rest1);
 add_comments_to_code(
   [Instruction | Rest], Location, Comments, Result) ->
     add_comments_to_code(Rest, Location, Comments, [Instruction | Result]).
@@ -1079,20 +1081,21 @@ split_comments(Rest, Comments) ->
     {lists:reverse(Comments), Rest}.
 
 merge_comments(Comments, ExistingComments) ->
-    ExistingCommentsMap = maps:from_list(
-                            [{Var, Info} ||
-                             {'%', {var_info, Var, Info}} <-
-                             ExistingComments]),
-    lists:map(fun({'%', {var_info, Var, Info}} = Annotation) ->
-        case ExistingCommentsMap of
-          #{Var := Info} ->
-              throw(duplicate_annotations);
-          #{Var := ExistingInfo} ->
-              {'%', {var_info, Var, Info ++ ExistingInfo}};
-          _ ->
-              Annotation
-        end
-    end, Comments).
+    ExistingCommentsMap = lists:foldl(
+                            fun({'%', {var_info, Var, Info}}, #{} = Acc) ->
+                                    Acc#{Var => Info}
+                            end, #{}, ExistingComments),
+    [begin
+         {'%', {var_info, Var, Info}} = Annotation,
+         case ExistingCommentsMap of
+             #{Var := Info} ->
+                 throw(duplicate_annotations);
+             #{Var := ExistingInfo} when is_list(ExistingInfo) ->
+                 {'%', {var_info, Var, Info ++ ExistingInfo}};
+             _ when not is_map_key(Var, ExistingCommentsMap) ->
+                 Annotation
+         end
+     end || Annotation <- Comments].
 
 -spec exec(StandaloneFun, Args) -> Ret when
       StandaloneFun :: horus_fun(),
@@ -1131,9 +1134,7 @@ exec(
     %% We also need to load any literal functions referenced by the standalone
     %% function and extracted with it. The assembly code already references
     %% them.
-    lists:foreach(
-      fun(LiteralFun) -> load_standalone_fun(LiteralFun) end,
-      LiteralFuns),
+    lists:foreach(fun load_standalone_fun/1, LiteralFuns),
     Env1 = to_actual_arg(Env),
     try
         erlang:apply(Module, ?SF_ENTRYPOINT, Args ++ Env1)
@@ -2170,8 +2171,8 @@ forget_overridden_object_code(Module) ->
 get_object_code(Module) ->
     Key = ?OBJECT_CODE_KEY(Module),
     case persistent_term:get(Key, undefined) of
-        undefined -> do_get_object_code(Module);
-        Beam      -> {Module, Beam, "", code_server}
+        undefined                 -> do_get_object_code(Module);
+        Beam when is_binary(Beam) -> {Module, Beam, "", code_server}
     end.
 
 -spec do_get_object_code(Module) -> Ret when
@@ -2716,16 +2717,26 @@ decode_field_flags(Instruction, Pos) when is_tuple(Instruction) ->
 
 decode_field_flags(0) ->
     [];
-decode_field_flags(FieldFlags) when is_integer(FieldFlags) ->
+decode_field_flags(FieldFlagsBitField)
+  when is_integer(FieldFlagsBitField) ->
+    decode_field_flags_bitfield(FieldFlagsBitField);
+decode_field_flags({field_flags, FieldFlagsBitField}) ->
+    FieldFlags = decode_field_flags_bitfield(FieldFlagsBitField),
+    {field_flags, FieldFlags}.
+
+-spec decode_field_flags_bitfield(FieldFlagsBitField) -> FieldFlags when
+      FieldFlagsBitField :: non_neg_integer(),
+      FieldFlags :: [FieldFlag],
+      FieldFlag :: little | signed | native.
+
+decode_field_flags_bitfield(FieldFlagsBitField)
+  when is_integer(FieldFlagsBitField) ->
     lists:filtermap(
       fun
-          (little) -> (FieldFlags band 16#02) == 16#02;
-          (signed) -> (FieldFlags band 16#04) == 16#04;
-          (native) -> (FieldFlags band 16#10) == 16#10
-      end, [signed, little, native]);
-decode_field_flags({field_flags, FieldFlagsBitField}) ->
-    FieldFlags = decode_field_flags(FieldFlagsBitField),
-    {field_flags, FieldFlags}.
+          (little) -> (FieldFlagsBitField band 16#02) == 16#02;
+          (signed) -> (FieldFlagsBitField band 16#04) == 16#04;
+          (native) -> (FieldFlagsBitField band 16#10) == 16#10
+      end, [signed, little, native]).
 
 fix_create_bin_list(
   [{atom, string} = Type, Seg, Unit, Flags, {u, Offset} = _Val, Size
@@ -2978,7 +2989,9 @@ pass2_process_function(
   State) ->
     Name1 = gen_function_name(Module, Name, Arity, State),
     Instructions1 = lists:map(
-                      fun(Instruction) ->
+                      fun(Instruction)
+                            when is_atom(Instruction) orelse
+                                 is_tuple(Instruction) ->
                               S1 = State#state{mfa_in_progress = {Module,
                                                                   Name,
                                                                   Arity},
@@ -3275,7 +3288,7 @@ to_standalone_env(State) ->
 
 to_standalone_arg(List, State) when is_list(List) ->
     lists:foldr(
-      fun(Item, {L, St}) ->
+      fun(Item, {L, St}) when is_list(L) ->
               {Item1, St1} = to_standalone_arg(Item, St),
               {[Item1 | L], St1}
       end, {[], State}, List);
@@ -3352,10 +3365,7 @@ to_actual_arg(#horus_fun{arity = Arity} = StandaloneFun) ->
                #{arity => Arity})
     end;
 to_actual_arg(List) when is_list(List) ->
-    lists:map(
-      fun(Item) ->
-              to_actual_arg(Item)
-      end, List);
+    [to_actual_arg(Item) || Item <- List];
 to_actual_arg(Tuple) when is_tuple(Tuple) ->
     List0 = tuple_to_list(Tuple),
     List1 = to_actual_arg(List0),
