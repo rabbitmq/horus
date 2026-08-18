@@ -995,7 +995,10 @@ find_comments_in_branch(Instructions, Index) ->
 
 find_comments_in_branch(
   _Instructions, Index, Index, VarInfos) ->
-    [{'%', {var_info, Var, Info}} || {Var, Info} <- maps:to_list(VarInfos)];
+    maps:fold(
+      fun(Var, Info, Acc) when is_list(Acc) ->
+              [{'%', {var_info, Var, Info}} | Acc]
+      end, [], VarInfos);
 find_comments_in_branch(
   [{'%', {var_info, Var, Info}} | Rest], Index, Counter, VarInfos) ->
     VarInfos1 = maps:put(Var, Info, VarInfos),
@@ -1078,10 +1081,10 @@ split_comments(Rest, Comments) ->
     {lists:reverse(Comments), Rest}.
 
 merge_comments(Comments, ExistingComments) ->
-    ExistingCommentsMap = maps:from_list(
-                            [{Var, Info} ||
-                             {'%', {var_info, Var, Info}} <-
-                             ExistingComments]),
+    ExistingCommentsMap = lists:foldl(
+                            fun({'%', {var_info, Var, Info}}, #{} = Acc) ->
+                                    Acc#{Var => Info}
+                            end, #{}, ExistingComments),
     lists:map(fun({'%', {var_info, Var, Info}} = Annotation) ->
         case ExistingCommentsMap of
           #{Var := Info} ->
