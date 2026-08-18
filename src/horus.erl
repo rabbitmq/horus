@@ -653,9 +653,9 @@ get_cached_standalone_fun(
             %% options.
             SameModules = maps:fold(
                             fun
-                                (Mod, Checksum, true) ->
+                                (Mod, Checksum, true) when is_atom(Mod) ->
                                     Checksum =:= Mod:module_info(md5);
-                                (_Module, _Checksum, false) ->
+                                (Mod, _Checksum, false) when is_atom(Mod) ->
                                     false
                             end, true, Checksums),
 
@@ -1090,10 +1090,9 @@ merge_comments(Comments, ExistingComments) ->
          case ExistingCommentsMap of
              #{Var := Info} ->
                  throw(duplicate_annotations);
-             #{Var := ExistingInfo} ->
-                 true = is_list(ExistingInfo),
+             #{Var := ExistingInfo} when is_list(ExistingInfo) ->
                  {'%', {var_info, Var, Info ++ ExistingInfo}};
-             _ ->
+             _ when not is_map_key(Var, ExistingCommentsMap) ->
                  Annotation
          end
      end || Annotation <- Comments].
@@ -2172,8 +2171,8 @@ forget_overridden_object_code(Module) ->
 get_object_code(Module) ->
     Key = ?OBJECT_CODE_KEY(Module),
     case persistent_term:get(Key, undefined) of
-        undefined -> do_get_object_code(Module);
-        Beam      -> {Module, Beam, "", code_server}
+        undefined                 -> do_get_object_code(Module);
+        Beam when is_binary(Beam) -> {Module, Beam, "", code_server}
     end.
 
 -spec do_get_object_code(Module) -> Ret when
@@ -2980,7 +2979,9 @@ pass2_process_function(
   State) ->
     Name1 = gen_function_name(Module, Name, Arity, State),
     Instructions1 = lists:map(
-                      fun(Instruction) ->
+                      fun(Instruction)
+                            when is_atom(Instruction) orelse
+                                 is_tuple(Instruction) ->
                               S1 = State#state{mfa_in_progress = {Module,
                                                                   Name,
                                                                   Arity},
@@ -3277,7 +3278,7 @@ to_standalone_env(State) ->
 
 to_standalone_arg(List, State) when is_list(List) ->
     lists:foldr(
-      fun(Item, {L, St}) ->
+      fun(Item, {L, St}) when is_list(L) ->
               {Item1, St1} = to_standalone_arg(Item, St),
               {[Item1 | L], St1}
       end, {[], State}, List);
