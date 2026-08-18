@@ -8,9 +8,15 @@
 
 -module(helpers).
 
+-include_lib("stdlib/include/assert.hrl").
+
+-include("test/helpers.hrl").
+
 -export([ensure_not_optimized/1,
          start_epmd/0,
          start_n_nodes/2]).
+
+-export([horus_exec/2]).
 
 -spec ensure_not_optimized(Value) -> Value when
       Value :: term().
@@ -75,3 +81,107 @@ start_erlang_node(Name) ->
     {ok, Node} = ct_slave:start(Name1, Options),
     {Node, Node}.
 -endif.
+
+horus_exec(StandaloneFun, Options) ->
+    case get_remote_executor() of
+        none ->
+            horus:exec(StandaloneFun, Options);
+        ServerRef ->
+            peer:call(
+              ServerRef,
+              horus, exec, [StandaloneFun, Options], infinity)
+    end.
+
+-define(EXECUTOR_KEY, horus_test_executor).
+
+get_remote_executor() ->
+    start_remote_executor().
+
+start_remote_executor() ->
+    try
+        persistent_term:get(?EXECUTOR_KEY)
+    catch
+        error:badarg ->
+            case os:getenv("HORUS_TEST_EXECUTOR") of
+                false ->
+                    set_no_executor();
+                ErlPath ->
+                    case filelib:is_regular(ErlPath) of
+                        true  -> do_start_executor(ErlPath);
+                        false -> set_no_executor()
+                    end
+            end
+    end.
+
+set_no_executor() ->
+    Executor = none,
+    persistent_term:put(?EXECUTOR_KEY, Executor),
+    Executor.
+
+do_start_executor(ErlPath) ->
+    Lock = {?FUNCTION_NAME, self()},
+    global:set_lock(Lock, [node()]),
+    try
+        persistent_term:get(?EXECUTOR_KEY)
+    catch
+        error:badarg ->
+            io:format(
+              standard_error,
+              "[use \"~s\" to execute functions]~n",
+              [ErlPath]),
+            Options = #{peer_down => crash,
+                        connection => standard_io,
+                        exec => ErlPath},
+            {ok, Executor, _Node} = peer:start_link(Options),
+            ok = prepare_horus_on_executor(Executor),
+            persistent_term:put(?EXECUTOR_KEY, Executor),
+            ok = validate_executor(),
+            Executor
+    after
+        global:del_lock(Lock, [node()])
+    end.
+
+prepare_horus_on_executor(Executor) ->
+    {ok, Cwd} = file:get_cwd(),
+    OutDir = filename:join(Cwd, "_ebin2"),
+    HorusDir = code:lib_dir(horus),
+    AppFileSrc = filename:join([HorusDir, "ebin", "horus.app"]),
+    AppFileDst = filename:join([OutDir, "horus.app"]),
+    _ = file:make_dir(OutDir),
+    {ok, _} = file:copy(AppFileSrc, AppFileDst),
+    ok = compile_horus_on_executor(Executor, OutDir),
+    ok = start_horus_on_executor(Executor, OutDir),
+    OtpRel = peer:call(Executor, erlang, system_info, [otp_release]),
+    io:format(
+      standard_error,
+      "[executor node ready, version ~s]~n",
+      [OtpRel]),
+    ok.
+
+compile_horus_on_executor(Executor, OutDir) ->
+    SrcFiles = filelib:wildcard(filename:join("src", "*.erl")),
+    Options = [debug_info,
+               warnings_as_errors,
+               {outdir, OutDir}],
+    lists:foreach(
+      fun(SrcFile) ->
+              ok = compile_file_on_executor(Executor, SrcFile, Options)
+      end, SrcFiles),
+    ok.
+
+compile_file_on_executor(Executor, SrcFile, Options) ->
+    {ok, _} = peer:call(Executor, compile, file, [SrcFile, Options]),
+    ok.
+
+start_horus_on_executor(Executor, OutDir) ->
+    true = peer:call(Executor, code, add_patha, [OutDir]),
+    {ok, _} = peer:call(Executor, application, ensure_all_started, [horus]),
+    ok.
+
+validate_executor() ->
+    Executor = get_remote_executor(),
+    OtpRel = peer:call(Executor, erlang, system_info, [otp_release]),
+    StandaloneFun = ?make_standalone_fun(erlang:system_info(otp_release)),
+    ?assertStandaloneFun(StandaloneFun),
+    ?assertEqual(OtpRel, helpers:horus_exec(StandaloneFun, [])),
+    ok.
