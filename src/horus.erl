@@ -2717,16 +2717,26 @@ decode_field_flags(Instruction, Pos) when is_tuple(Instruction) ->
 
 decode_field_flags(0) ->
     [];
-decode_field_flags(FieldFlags) when is_integer(FieldFlags) ->
+decode_field_flags(FieldFlagsBitField)
+  when is_integer(FieldFlagsBitField) ->
+    decode_field_flags_bitfield(FieldFlagsBitField);
+decode_field_flags({field_flags, FieldFlagsBitField}) ->
+    FieldFlags = decode_field_flags_bitfield(FieldFlagsBitField),
+    {field_flags, FieldFlags}.
+
+-spec decode_field_flags_bitfield(FieldFlagsBitField) -> FieldFlags when
+      FieldFlagsBitField :: non_neg_integer(),
+      FieldFlags :: [FieldFlag],
+      FieldFlag :: little | signed | native.
+
+decode_field_flags_bitfield(FieldFlagsBitField)
+  when is_integer(FieldFlagsBitField) ->
     lists:filtermap(
       fun
-          (little) -> (FieldFlags band 16#02) == 16#02;
-          (signed) -> (FieldFlags band 16#04) == 16#04;
-          (native) -> (FieldFlags band 16#10) == 16#10
-      end, [signed, little, native]);
-decode_field_flags({field_flags, FieldFlagsBitField}) ->
-    FieldFlags = decode_field_flags(FieldFlagsBitField),
-    {field_flags, FieldFlags}.
+          (little) -> (FieldFlagsBitField band 16#02) == 16#02;
+          (signed) -> (FieldFlagsBitField band 16#04) == 16#04;
+          (native) -> (FieldFlagsBitField band 16#10) == 16#10
+      end, [signed, little, native]).
 
 fix_create_bin_list(
   [{atom, string} = Type, Seg, Unit, Flags, {u, Offset} = _Val, Size
