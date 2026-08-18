@@ -681,9 +681,9 @@ get_cached_standalone_fun(_State) ->
     %% TODO: Can we cache them?
     undefined.
 
--spec cache_standalone_fun(StandaloneFun, State) -> ok when
-      StandaloneFun :: horus_fun() | fun_kept,
-      State :: #state{}.
+-spec cache_standalone_fun(State, StandaloneFun) -> ok when
+      State :: #state{},
+      StandaloneFun :: horus_fun() | fun_kept.
 %% @private
 
 cache_standalone_fun(
