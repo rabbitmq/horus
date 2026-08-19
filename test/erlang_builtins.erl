@@ -30,7 +30,7 @@ apply_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 %% `apply_last' instruction is used when the apply is the last call
 %% in the function.
@@ -41,4 +41,4 @@ apply_last_test() ->
                            Module:tl([[a, b], c])
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual([c], horus:exec(StandaloneFun, [])).
+    ?assertEqual([c], helpers:horus_exec(StandaloneFun, [])).

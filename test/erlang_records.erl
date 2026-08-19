@@ -19,13 +19,13 @@ create_record_test() ->
     Field = helpers:ensure_not_optimized(ok),
     StandaloneFun = ?make_standalone_fun(#my_record{field = Field}),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(#my_record{field = Field}, horus:exec(StandaloneFun, [])).
+    ?assertEqual(#my_record{field = Field}, helpers:horus_exec(StandaloneFun, [])).
 
 update_record_test() ->
     Record = helpers:ensure_not_optimized(#pair{a = 123, b = 456}),
     StandaloneFun = ?make_standalone_fun(Record#pair{a = 789}),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(#pair{a = 789, b = 456}, horus:exec(StandaloneFun, [])).
+    ?assertEqual(#pair{a = 789, b = 456}, helpers:horus_exec(StandaloneFun, [])).
 
 match_record_test() ->
     Record = helpers:ensure_not_optimized(#my_record{field = ok}),
@@ -35,4 +35,4 @@ match_record_test() ->
                            Field
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).

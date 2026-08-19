@@ -20,16 +20,16 @@ local_fun_test() ->
     StandaloneFun1 = horus:to_standalone_fun(Fun),
     StandaloneFun2 = horus:to_standalone_fun(Fun),
     ?assertEqual(StandaloneFun1, StandaloneFun2),
-    ?assertEqual(ok, horus:exec(StandaloneFun1, [])),
-    ?assertEqual(ok, horus:exec(StandaloneFun2, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun1, [])),
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun2, [])).
 
 external_fun_test() ->
     Fun = fun erlang:abs/1,
     StandaloneFun1 = horus:to_standalone_fun(Fun),
     StandaloneFun2 = horus:to_standalone_fun(Fun),
     ?assertEqual(StandaloneFun1, StandaloneFun2),
-    ?assertEqual(1, horus:exec(StandaloneFun1, [1])),
-    ?assertEqual(1, horus:exec(StandaloneFun2, [1])).
+    ?assertEqual(1, helpers:horus_exec(StandaloneFun1, [1])),
+    ?assertEqual(1, helpers:horus_exec(StandaloneFun2, [1])).
 
 standalone_fun_is_cached_test() ->
     Fun = fun() -> ok end,
@@ -169,7 +169,7 @@ modified_module_causes_cache_miss_test() ->
     StandaloneFun1 = horus:to_standalone_fun(Fun1, Options),
     CacheEntry1 = persistent_term:get(Key1, undefined),
     ?assertStandaloneFun(StandaloneFun1),
-    ?assertEqual(1, horus:exec(StandaloneFun1, [])),
+    ?assertEqual(1, helpers:horus_exec(StandaloneFun1, [])),
     #{counters := Counters1} = CacheEntry1,
     ?assertEqual(0, counters:get(Counters1, 1)),
 
@@ -197,7 +197,7 @@ modified_module_causes_cache_miss_test() ->
     StandaloneFun2 = horus:to_standalone_fun(Fun2, Options),
     CacheEntry2 = persistent_term:get(Key2, undefined),
     ?assertStandaloneFun(StandaloneFun2),
-    ?assertEqual(2, horus:exec(StandaloneFun2, [])),
+    ?assertEqual(2, helpers:horus_exec(StandaloneFun2, [])),
     #{counters := Counters2} = CacheEntry2,
     ?assertEqual(0, counters:get(Counters2, 1)),
 

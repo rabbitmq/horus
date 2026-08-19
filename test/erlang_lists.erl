@@ -16,19 +16,19 @@ list_prepend_test() ->
     List = helpers:ensure_not_optimized([b]),
     StandaloneFun = ?make_standalone_fun([a | List]),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual([a, b], horus:exec(StandaloneFun, [])).
+    ?assertEqual([a, b], helpers:horus_exec(StandaloneFun, [])).
 
 list_concat_test() ->
     List = helpers:ensure_not_optimized([a]),
     StandaloneFun = ?make_standalone_fun(List ++ [b]),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual([a, b], horus:exec(StandaloneFun, [])).
+    ?assertEqual([a, b], helpers:horus_exec(StandaloneFun, [])).
 
 list_diff_test() ->
     List = helpers:ensure_not_optimized([a, b]),
     StandaloneFun = ?make_standalone_fun(List -- [b]),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual([a], horus:exec(StandaloneFun, [])).
+    ?assertEqual([a], helpers:horus_exec(StandaloneFun, [])).
 
 list_comprehension_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -36,7 +36,7 @@ list_comprehension_test() ->
                            [erlang:abs(I) || I <- [1, 2, 3]]
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual([1, 2, 3], horus:exec(StandaloneFun, [])).
+    ?assertEqual([1, 2, 3], helpers:horus_exec(StandaloneFun, [])).
 
 list_comprehension_with_conditions_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -46,7 +46,7 @@ list_comprehension_with_conditions_test() ->
                                I >= 2]
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual([2, 3], horus:exec(StandaloneFun, [])).
+    ?assertEqual([2, 3], helpers:horus_exec(StandaloneFun, [])).
 
 list_comprehension_with_multiple_qualifiers_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -58,7 +58,7 @@ list_comprehension_with_multiple_qualifiers_test() ->
                                {_, Value} <- Props]
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual([1, 2, 3], horus:exec(StandaloneFun, [])).
+    ?assertEqual([1, 2, 3], helpers:horus_exec(StandaloneFun, [])).
 
 list_pattern_matching_test() ->
     List = helpers:ensure_not_optimized([a, b, c]),
@@ -66,7 +66,7 @@ list_pattern_matching_test() ->
     %% Tests the get_list/3 instruction.
     Reverse = ?make_standalone_fun(reverse(List)),
     ?assertStandaloneFun(Reverse),
-    ?assertEqual([c, b, a], horus:exec(Reverse, [])),
+    ?assertEqual([c, b, a], helpers:horus_exec(Reverse, [])),
 
     %% Tests the get_hd/2 instruction.
     ReverseHead = ?make_standalone_fun(
@@ -75,7 +75,7 @@ list_pattern_matching_test() ->
                             Head
                         end),
     ?assertStandaloneFun(ReverseHead),
-    ?assertEqual(c, horus:exec(ReverseHead, [])).
+    ?assertEqual(c, helpers:horus_exec(ReverseHead, [])).
 
 reverse(List) ->
     reverse(List, []).

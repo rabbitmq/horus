@@ -36,7 +36,7 @@ jobs:
       - name: EUnit (unit tests)
         run: env ERL_FLAGS='-enable-feature maybe_expr' rebar3 eunit --verbose --cover
       - name: Common test (integration tests)
-        run: rebar3 ct --verbose --cover --sname ct
+        run: rebar3 ct --verbose --cover
 
       - name: Upload common_test logs
         uses: actions/upload-artifact@v7

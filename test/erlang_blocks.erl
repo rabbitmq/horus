@@ -26,7 +26,7 @@ begin_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 case_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -36,7 +36,7 @@ case_test() ->
                            {_, _, _} -> error
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 if_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -48,42 +48,42 @@ if_test() ->
                            end
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 receive_any_test() ->
-    self() ! ?FUNCTION_NAME,
     StandaloneFun = ?make_standalone_fun(
                        begin
+                           self() ! ?FUNCTION_NAME,
                            receive
                                Msg -> Msg
                            end
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(?FUNCTION_NAME, horus:exec(StandaloneFun, [])).
+    ?assertEqual(?FUNCTION_NAME, helpers:horus_exec(StandaloneFun, [])).
 
 receive_match_test() ->
-    self() ! ?FUNCTION_NAME,
     StandaloneFun = ?make_standalone_fun(
                        begin
+                           self() ! ?FUNCTION_NAME,
                            receive
                                ?FUNCTION_NAME -> ok;
                                _              -> error
                            end
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 receive_after_test() ->
-    self() ! ?FUNCTION_NAME,
     StandaloneFun = ?make_standalone_fun(
                        begin
+                           self() ! ?FUNCTION_NAME,
                            receive
                                Msg -> Msg
                            after 10000 -> error
                            end
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(?FUNCTION_NAME, horus:exec(StandaloneFun, [])).
+    ?assertEqual(?FUNCTION_NAME, helpers:horus_exec(StandaloneFun, [])).
 
 try_catch_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -95,7 +95,7 @@ try_catch_test() ->
                                ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 try_catch_after_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -109,7 +109,7 @@ try_catch_after_test() ->
                                  nothing_returned
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 try_of_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -122,7 +122,7 @@ try_of_test() ->
                                ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 catch_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -131,7 +131,7 @@ catch_test() ->
                            ok
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(ok, horus:exec(StandaloneFun, [])).
+    ?assertEqual(ok, helpers:horus_exec(StandaloneFun, [])).
 
 raise_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -143,7 +143,7 @@ raise_test() ->
                                erlang:raise(Class, Reason, Stacktrace)
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertError({badmatch, 1}, horus:exec(StandaloneFun, [])).
+    ?assertError({badmatch, 1}, helpers:horus_exec(StandaloneFun, [])).
 
 -if(?OTP_RELEASE >= 25).
 -if(?FEATURE_ENABLED(maybe_expr)).
@@ -158,7 +158,7 @@ maybe_test() ->
                            end
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(100, horus:exec(StandaloneFun, [])).
+    ?assertEqual(100, helpers:horus_exec(StandaloneFun, [])).
 
 maybe_else_test() ->
     StandaloneFun = ?make_standalone_fun(
@@ -178,6 +178,6 @@ maybe_else_test() ->
                            end
                        end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(reason, horus:exec(StandaloneFun, [])).
+    ?assertEqual(reason, helpers:horus_exec(StandaloneFun, [])).
 -endif.
 -endif.

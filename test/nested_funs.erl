@@ -25,77 +25,77 @@ fun0_in_fun_env_test() ->
     StandaloneFun = ?make_standalone_fun(Fun()),
     ?assertStandaloneFun(StandaloneFun),
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertEqual(result, horus:exec(StandaloneFun, [])).
+    ?assertEqual(result, helpers:horus_exec(StandaloneFun, [])).
 
 fun1_in_fun_env_test() ->
     Fun = make_fun(1),
     StandaloneFun = ?make_standalone_fun(Fun(1)),
     ?assertStandaloneFun(StandaloneFun),
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertEqual(result, horus:exec(StandaloneFun, [])).
+    ?assertEqual(result, helpers:horus_exec(StandaloneFun, [])).
 
 fun2_in_fun_env_test() ->
     Fun = make_fun(2),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2)),
     ?assertStandaloneFun(StandaloneFun),
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertEqual(result, horus:exec(StandaloneFun, [])).
+    ?assertEqual(result, helpers:horus_exec(StandaloneFun, [])).
 
 fun3_in_fun_env_test() ->
     Fun = make_fun(3),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3)),
     ?assertStandaloneFun(StandaloneFun),
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertEqual(result, horus:exec(StandaloneFun, [])).
+    ?assertEqual(result, helpers:horus_exec(StandaloneFun, [])).
 
 fun4_in_fun_env_test() ->
     Fun = make_fun(4),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4)),
     ?assertStandaloneFun(StandaloneFun),
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertEqual(result, horus:exec(StandaloneFun, [])).
+    ?assertEqual(result, helpers:horus_exec(StandaloneFun, [])).
 
 fun5_in_fun_env_test() ->
     Fun = make_fun(5),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5)),
     ?assertStandaloneFun(StandaloneFun),
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertEqual(result, horus:exec(StandaloneFun, [])).
+    ?assertEqual(result, helpers:horus_exec(StandaloneFun, [])).
 
 fun6_in_fun_env_test() ->
     Fun = make_fun(6),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5, 6)),
     ?assertStandaloneFun(StandaloneFun),
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertEqual(result, horus:exec(StandaloneFun, [])).
+    ?assertEqual(result, helpers:horus_exec(StandaloneFun, [])).
 
 fun7_in_fun_env_test() ->
     Fun = make_fun(7),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5, 6, 7)),
     ?assertStandaloneFun(StandaloneFun),
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertEqual(result, horus:exec(StandaloneFun, [])).
+    ?assertEqual(result, helpers:horus_exec(StandaloneFun, [])).
 
 fun8_in_fun_env_test() ->
     Fun = make_fun(8),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5, 6, 7, 8)),
     ?assertStandaloneFun(StandaloneFun),
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertEqual(result, horus:exec(StandaloneFun, [])).
+    ?assertEqual(result, helpers:horus_exec(StandaloneFun, [])).
 
 fun9_in_fun_env_test() ->
     Fun = make_fun(9),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5, 6, 7, 8, 9)),
     ?assertStandaloneFun(StandaloneFun),
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertEqual(result, horus:exec(StandaloneFun, [])).
+    ?assertEqual(result, helpers:horus_exec(StandaloneFun, [])).
 
 fun10_in_fun_env_test() ->
     Fun = make_fun(10),
     StandaloneFun = ?make_standalone_fun(Fun(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
     ?assertStandaloneFun(StandaloneFun),
     ?assertNotEqual([], StandaloneFun#horus_fun.env),
-    ?assertEqual(result, horus:exec(StandaloneFun, [])).
+    ?assertEqual(result, helpers:horus_exec(StandaloneFun, [])).
 
 fun11_in_fun_env_test() ->
     Fun = make_fun(11),
@@ -108,7 +108,7 @@ fun11_in_fun_env_test() ->
        ?horus_exception(
           nested_fun_with_arity_too_great,
           #{arity := 11}),
-       horus:exec(StandaloneFun, [])).
+       helpers:horus_exec(StandaloneFun, [])).
 
 make_fun(0)  -> fun() -> result end;
 make_fun(1)  -> fun(_) -> result end;
@@ -130,7 +130,7 @@ higher_order_external_call_test() ->
                             apply_fun_to_args(Fun, 1, 2)
                         end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(1, horus:exec(StandaloneFun, [])).
+    ?assertEqual(1, helpers:horus_exec(StandaloneFun, [])).
 
 apply_fun_to_args(Fun, Arg1, Arg2) ->
     Fun(Arg1, Arg2).
@@ -172,7 +172,7 @@ call_fun2_instruction_with_atom_unsafe_test() ->
                             {ok, R}
                         end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertError({badarity, {_, [#{}]}}, horus:exec(StandaloneFun, [])).
+    ?assertError({badarity, {_, [#{}]}}, helpers:horus_exec(StandaloneFun, [])).
 
 -spec call_outer_function_external(fun(), fun(), map()) -> no_return().
 
@@ -199,7 +199,7 @@ call_fun2_instruction_with_jump_label_test() ->
                             {ok, R}
                         end),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual({ok, {outer, inner}}, horus:exec(StandaloneFun, [])).
+    ?assertEqual({ok, {outer, inner}}, helpers:horus_exec(StandaloneFun, [])).
 
 call_outer_function_local(OuterFun, InnerFun, Options) ->
     OuterFun(
