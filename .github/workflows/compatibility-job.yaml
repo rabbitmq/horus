@@ -30,7 +30,7 @@ jobs:
           - { from_otp_version: '29', to_otp_version: '29' }
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Erlang/OTP ${{ matrix.to_otp_version }} ("to")
         uses: erlef/setup-beam@v1
