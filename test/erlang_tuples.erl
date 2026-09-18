@@ -13,7 +13,7 @@
 -include("test/helpers.hrl").
 
 select_tuple_arity_var_info_test() ->
-    Nodes = [node() | nodes()],
+    Nodes = nodes(this),
     StandaloneFun = ?make_standalone_fun(
                        begin
                            Tuple = make_tuple(Nodes),
