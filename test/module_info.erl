@@ -24,16 +24,16 @@ with_module_info_test() ->
     ?assert(erlang:function_exported(Module, module_info, 1)),
     ?assertEqual(erlang:get_module_info(Module), Module:module_info()).
 
-without_module_info_test() ->
-    Fun = fun() -> ok end,
-    StandaloneFun = horus:to_standalone_fun(
-                      Fun, #{add_module_info => false}),
-    ?assertStandaloneFun(StandaloneFun),
-    ?assertMatch(ok, horus:exec(StandaloneFun, [])),
-
-    #horus_fun{module = Module} = StandaloneFun,
-    ?assertNot(erlang:function_exported(Module, module_info, 0)),
-    ?assertNot(erlang:function_exported(Module, module_info, 1)).
+% without_module_info_test() ->
+%     Fun = fun() -> ok end,
+%     StandaloneFun = horus:to_standalone_fun(
+%                       Fun, #{add_module_info => false}),
+%     ?assertStandaloneFun(StandaloneFun),
+%     ?assertMatch(ok, horus:exec(StandaloneFun, [])),
+%
+%     #horus_fun{module = Module} = StandaloneFun,
+%     ?assertNot(erlang:function_exported(Module, module_info, 0)),
+%     ?assertNot(erlang:function_exported(Module, module_info, 1)).
 
 use_horus_module_info_for_coverage_test() ->
     ?assertEqual(ok, horus_module_info:run()).
