@@ -78,7 +78,22 @@ extract_function(Fun, #extraction{'fun' = EntryPoint} = Extraction)
     #{module := Module,
       name := Name,
       arity := Arity,
+      type := Type,
       env := Env} = FunInfo,
+    case Type of
+        local ->
+            ok;
+        external ->
+            _ = catch Module:module_info(),
+            case erlang:function_exported(Module, Name, Arity) of
+                true ->
+                    ok;
+                false ->
+                    throw(?horus_error(
+                             call_to_unexported_function,
+                             #{mfa => {Module, Name, Arity}}))
+            end
+    end,
     InternalName = case Fun =:= EntryPoint of
                        true  -> ?SF_ENTRYPOINT;
                        false -> gen_function_name(Module, Name)
@@ -189,6 +204,17 @@ do_extract_function(
                                        false ->
                                            Module = cerl:concrete(ModuleNode),
                                            Name = cerl:concrete(NameNode),
+                                           _ = catch Module:module_info(),
+                                           case erlang:function_exported(Module, Name, Arity) of
+                                               true ->
+                                                   ok;
+                                               false when Module =:= ThisModule ->
+                                                   ok;
+                                               false ->
+                                                   throw(?horus_error(
+                                                            call_to_unexported_function,
+                                                            #{mfa => {Module, Name, Arity}}))
+                                           end,
                                            CallRef = {Module, Name, Arity},
                                            AllCalls1 = AllCalls#{CallRef => true},
                                            case Functions of
@@ -396,11 +422,32 @@ create_standalone_fun(
                                                     Acc
                                             end
                                     end, [], FunctionsRefs),
+            % io:format(standard_error, "CORE ERLANG:~n~p~n", [FunctionsCoreErlang]),
+            MIExports = [cerl:c_var({module_info, 0}),
+                         cerl:c_var({module_info, 1})],
+            MICoreErlang = [{cerl:c_var({module_info, 0}),
+                             cerl:ann_c_fun(
+                               [{function, {module_info, 0}}],
+                               [],
+                               cerl:c_call(
+                                 cerl:abstract(erlang),
+                                 cerl:abstract(get_module_info),
+                                 [cerl:abstract(GeneratedModuleName)]))},
+                            {cerl:c_var({module_info, 1}),
+                             cerl:ann_c_fun(
+                               [{function, {module_info, 0}}],
+                               [cerl:c_var(0)],
+                               cerl:c_call(
+                                 cerl:abstract(erlang),
+                                 cerl:abstract(get_module_info),
+                                 [cerl:abstract(GeneratedModuleName),
+                                  cerl:c_var(0)]))}],
+
             Exports = [cerl:c_var({EntryPointName, EntryPointArity})],
             ModuleCoreErlang = cerl:c_module(
                                  cerl:c_atom(GeneratedModuleName),
-                                 Exports,
-                                 FunctionsCoreErlang),
+                                 Exports ++ MIExports,
+                                 FunctionsCoreErlang ++ MICoreErlang),
             % ?LOG_ALERT(
             %    "Generated module Core Erlang:~n~p~n",
             %    [ModuleCoreErlang]),
