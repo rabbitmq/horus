@@ -16,7 +16,8 @@
          start_epmd/0,
          start_n_nodes/2]).
 
--export([horus_exec/2]).
+-export([horus_to_standalone_fun/1, horus_to_standalone_fun/2,
+         horus_exec/2]).
 
 -spec ensure_not_optimized(Value) -> Value when
       Value :: term().
@@ -82,106 +83,176 @@ start_erlang_node(Name) ->
     {Node, Node}.
 -endif.
 
+horus_to_standalone_fun(Fun) ->
+    case get_remote_extractor() of
+        none ->
+            horus:to_standalone_fun(Fun);
+        ServerRef ->
+            FunInfo = erlang:fun_info(Fun),
+            Mod = proplists:get_value(module, FunInfo),
+            _ = peer:call(
+                  ServerRef,
+                  Mod, module_info, [], infinity),
+            peer:call(
+              ServerRef,
+              horus, to_standalone_fun, [Fun], infinity)
+    end.
+
+horus_to_standalone_fun(Fun, Options) ->
+    case get_remote_extractor() of
+        none ->
+            horus:to_standalone_fun(Fun, Options);
+        ServerRef ->
+            FunInfo = erlang:fun_info(Fun),
+            Mod = proplists:get_value(module, FunInfo),
+            _ = peer:call(
+                  ServerRef,
+                  Mod, module_info, [], infinity),
+            peer:call(
+              ServerRef,
+              horus, to_standalone_fun, [Fun, Options], infinity)
+    end.
+
 horus_exec(StandaloneFun, Options) ->
     case get_remote_executor() of
         none ->
-            horus:exec(StandaloneFun, Options);
+            case get_remote_extractor() of
+                none ->
+                    horus:exec(StandaloneFun, Options);
+                ServerRef ->
+                    peer:call(
+                      ServerRef,
+                      horus, exec, [StandaloneFun, Options], infinity)
+            end;
         ServerRef ->
             peer:call(
               ServerRef,
               horus, exec, [StandaloneFun, Options], infinity)
     end.
 
+-define(EXTRACTOR_KEY, horus_test_extractor).
 -define(EXECUTOR_KEY, horus_test_executor).
 
-get_remote_executor() ->
-    start_remote_executor().
+get_remote_extractor() ->
+    get_remote_env(?EXTRACTOR_KEY).
 
-start_remote_executor() ->
+get_remote_executor() ->
+    get_remote_env(?EXECUTOR_KEY).
+
+get_remote_env(?EXTRACTOR_KEY = Key) ->
+    start_remote_env("HORUS_TEST_EXTRACTOR", Key);
+get_remote_env(?EXECUTOR_KEY = Key) ->
+    start_remote_env("HORUS_TEST_EXECUTOR", Key).
+
+start_remote_env(EnvVar, Key) ->
     try
-        persistent_term:get(?EXECUTOR_KEY)
+        persistent_term:get(Key)
     catch
         error:badarg ->
-            case os:getenv("HORUS_TEST_EXECUTOR") of
+            case os:getenv(EnvVar) of
                 false ->
-                    set_no_executor();
+                    set_no_remote_env(Key);
                 ErlPath ->
                     case filelib:is_regular(ErlPath) of
-                        true  -> do_start_executor(ErlPath);
-                        false -> set_no_executor()
+                        true  -> do_start_remote_env(Key, ErlPath);
+                        false -> set_no_remote_env(Key)
                     end
             end
     end.
 
-set_no_executor() ->
-    Executor = none,
-    persistent_term:put(?EXECUTOR_KEY, Executor),
-    Executor.
+set_no_remote_env(Key) ->
+    RemoteEnv = none,
+    persistent_term:put(Key, RemoteEnv),
+    RemoteEnv.
 
-do_start_executor(ErlPath) ->
+do_start_remote_env(Key, ErlPath) ->
     Lock = {?FUNCTION_NAME, self()},
     global:set_lock(Lock, [node()]),
     try
-        persistent_term:get(?EXECUTOR_KEY)
+        persistent_term:get(Key)
     catch
         error:badarg ->
             io:format(
               standard_error,
-              "[use \"~s\" to execute functions]~n",
-              [ErlPath]),
+              "[use \"~s\" to ~s functions]~n",
+              [ErlPath,
+               case Key of
+                   ?EXTRACTOR_KEY -> "extract";
+                   ?EXECUTOR_KEY  -> "execute"
+               end]),
             Options = #{peer_down => crash,
                         connection => standard_io,
                         exec => ErlPath},
-            {ok, Executor, _Node} = peer:start_link(Options),
-            ok = prepare_horus_on_executor(Executor),
-            persistent_term:put(?EXECUTOR_KEY, Executor),
-            ok = validate_executor(),
-            Executor
+            {ok, RemoteEnv, _Node} = peer:start_link(Options),
+            ok = prepare_horus_on_remote_env(Key, RemoteEnv),
+            persistent_term:put(Key, RemoteEnv),
+            ok = validate_remote_env(Key),
+            RemoteEnv
     after
         global:del_lock(Lock, [node()])
     end.
 
-prepare_horus_on_executor(Executor) ->
-    {ok, Cwd} = file:get_cwd(),
-    OutDir = filename:join(Cwd, "_ebin2"),
+prepare_horus_on_remote_env(Key, RemoteEnv) ->
     HorusDir = code:lib_dir(horus),
-    AppFileSrc = filename:join([HorusDir, "ebin", "horus.app"]),
-    AppFileDst = filename:join([OutDir, "horus.app"]),
-    _ = file:make_dir(OutDir),
-    {ok, _} = file:copy(AppFileSrc, AppFileDst),
-    ok = compile_horus_on_executor(Executor, OutDir),
-    ok = start_horus_on_executor(Executor, OutDir),
-    OtpRel = peer:call(Executor, erlang, system_info, [otp_release]),
+    case Key of
+        ?EXTRACTOR_KEY ->
+            EbinDir = filename:join(HorusDir, "ebin"),
+            TestDir = filename:join(HorusDir, "test"),
+            ok = peer:call(
+                   RemoteEnv, code, add_pathsa, [[EbinDir, TestDir]]),
+            ok;
+        ?EXECUTOR_KEY ->
+            {ok, Cwd} = file:get_cwd(),
+            OutDir = filename:join(Cwd, "_ebin_" ++ atom_to_list(Key)),
+            AppFileSrc = filename:join([HorusDir, "ebin", "horus.app"]),
+            AppFileDst = filename:join([OutDir, "horus.app"]),
+            _ = file:make_dir(OutDir),
+            {ok, _} = file:copy(AppFileSrc, AppFileDst),
+            ok = compile_horus_on_remote_env(RemoteEnv, OutDir),
+            true = peer:call(RemoteEnv, code, add_patha, [OutDir])
+    end,
+    ok = start_horus_on_remote_env(RemoteEnv),
+    OtpRel = peer:call(RemoteEnv, erlang, system_info, [otp_release]),
     io:format(
       standard_error,
-      "[executor node ready, version ~s]~n",
-      [OtpRel]),
+      "[~s node ready, version ~s]~n",
+      [case Key of
+           ?EXTRACTOR_KEY -> "extractor";
+           ?EXECUTOR_KEY  -> "executor"
+       end,
+       OtpRel]),
     ok.
 
-compile_horus_on_executor(Executor, OutDir) ->
+compile_horus_on_remote_env(RemoteEnv, OutDir) ->
     SrcFiles = filelib:wildcard(filename:join("src", "*.erl")),
     Options = [debug_info,
                warnings_as_errors,
                {outdir, OutDir}],
     lists:foreach(
       fun(SrcFile) ->
-              ok = compile_file_on_executor(Executor, SrcFile, Options)
+              ok = compile_file_on_remote_env(RemoteEnv, SrcFile, Options)
       end, SrcFiles),
     ok.
 
-compile_file_on_executor(Executor, SrcFile, Options) ->
-    {ok, _} = peer:call(Executor, compile, file, [SrcFile, Options]),
+compile_file_on_remote_env(RemoteEnv, SrcFile, Options) ->
+    {ok, _} = peer:call(RemoteEnv, compile, file, [SrcFile, Options]),
     ok.
 
-start_horus_on_executor(Executor, OutDir) ->
-    true = peer:call(Executor, code, add_patha, [OutDir]),
-    {ok, _} = peer:call(Executor, application, ensure_all_started, [horus]),
+start_horus_on_remote_env(RemoteEnv) ->
+    {ok, _} = peer:call(RemoteEnv, application, ensure_all_started, [horus]),
     ok.
 
-validate_executor() ->
-    Executor = get_remote_executor(),
-    OtpRel = peer:call(Executor, erlang, system_info, [otp_release]),
+validate_remote_env(Key) ->
+    RemoteEnv = get_remote_env(Key),
+    OtpRel = peer:call(RemoteEnv, erlang, system_info, [otp_release]),
     StandaloneFun = ?make_standalone_fun(erlang:system_info(otp_release)),
     ?assertStandaloneFun(StandaloneFun),
-    ?assertEqual(OtpRel, helpers:horus_exec(StandaloneFun, [])),
+    ?assertEqual(
+       OtpRel,
+       case Key of
+           ?EXTRACTOR_KEY ->
+               peer:call(RemoteEnv, horus, exec, [StandaloneFun, []]);
+           ?EXECUTOR_KEY ->
+               helpers:horus_exec(StandaloneFun, [])
+       end),
     ok.

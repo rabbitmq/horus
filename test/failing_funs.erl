@@ -41,7 +41,8 @@ exit_test() ->
 
 stacktrace_test() ->
     Fun = fun() -> failing_fun() end,
-    StandaloneFun = horus:to_standalone_fun(Fun, #{debug_info => true}),
+    StandaloneFun = helpers:horus_to_standalone_fun(
+                      Fun, #{debug_info => true}),
     ?assertStandaloneFun(StandaloneFun),
     Stacktrace1 = try
                       Fun()

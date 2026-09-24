@@ -13,7 +13,7 @@
 -define(make_standalone_fun(Expression),
         fun() ->
             __Fun = fun() -> Expression end,
-            horus:to_standalone_fun(__Fun, #{debug_info => true})
+            helpers:horus_to_standalone_fun(__Fun, #{debug_info => true})
         end()).
 
 -define(assertStandaloneFun(StandaloneFun),
