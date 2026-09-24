@@ -34,3 +34,6 @@ without_module_info_test() ->
     #horus_fun{module = Module} = StandaloneFun,
     ?assertNot(erlang:function_exported(Module, module_info, 0)),
     ?assertNot(erlang:function_exported(Module, module_info, 1)).
+
+use_horus_module_info_for_coverage_test() ->
+    ?assertEqual(ok, horus_module_info:run()).
