@@ -16,7 +16,7 @@
 
 list_in_fun_env_test() ->
     List = make_list(),
-    StandaloneFun = horus:to_standalone_fun(fun() -> List end),
+    StandaloneFun = helpers:horus_to_standalone_fun(fun() -> List end),
     ?assertStandaloneFun(StandaloneFun),
     ?assertEqual(List, helpers:horus_exec(StandaloneFun, [])).
 
@@ -24,7 +24,7 @@ make_list() -> [a, b].
 
 map_in_fun_env_test() ->
     Map = make_map(),
-    StandaloneFun = horus:to_standalone_fun(fun() -> Map end),
+    StandaloneFun = helpers:horus_to_standalone_fun(fun() -> Map end),
     ?assertStandaloneFun(StandaloneFun),
     ?assertEqual(Map, helpers:horus_exec(StandaloneFun, [])).
 
@@ -32,7 +32,7 @@ make_map() -> #{a => b}.
 
 tuple_in_fun_env_test() ->
     Tuple = make_tuple(),
-    StandaloneFun = horus:to_standalone_fun(fun() -> Tuple end),
+    StandaloneFun = helpers:horus_to_standalone_fun(fun() -> Tuple end),
     ?assertStandaloneFun(StandaloneFun),
     ?assertEqual(Tuple, helpers:horus_exec(StandaloneFun, [])).
 
@@ -40,7 +40,7 @@ make_tuple() -> {a, b}.
 
 binary_in_fun_env_test() ->
     Binary = make_binary(),
-    StandaloneFun = horus:to_standalone_fun(fun() -> Binary end),
+    StandaloneFun = helpers:horus_to_standalone_fun(fun() -> Binary end),
     ?assertStandaloneFun(StandaloneFun),
     ?assertEqual(Binary, helpers:horus_exec(StandaloneFun, [])).
 

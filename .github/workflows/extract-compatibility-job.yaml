@@ -1,4 +1,4 @@
-name: Single compatibility job
+name: Single extract compatibility job
 
 on:
   workflow_call:
@@ -11,8 +11,8 @@ on:
         required: true
 
 env:
-  SETUP_BEAM_2:        /home/runner/work/_temp/.setup-beam-2
-  HORUS_TEST_EXECUTOR: /home/runner/work/_temp/.setup-beam-2/otp/bin/erl
+  SETUP_BEAM_2:         /home/runner/work/_temp/.setup-beam-2
+  HORUS_TEST_EXTRACTOR: /home/runner/work/_temp/.setup-beam-2/otp/bin/erl
 
 jobs:
   test:
@@ -25,8 +25,17 @@ jobs:
         to_otp_version:   ['26', '27', '28', '29']
         exclude:
           - { from_otp_version: '26', to_otp_version: '26' }
+
+          - { from_otp_version: '27', to_otp_version: '26' }
           - { from_otp_version: '27', to_otp_version: '27' }
+
+          - { from_otp_version: '28', to_otp_version: '26' }
+          - { from_otp_version: '28', to_otp_version: '27' }
           - { from_otp_version: '28', to_otp_version: '28' }
+
+          - { from_otp_version: '29', to_otp_version: '26' }
+          - { from_otp_version: '29', to_otp_version: '27' }
+          - { from_otp_version: '29', to_otp_version: '28' }
           - { from_otp_version: '29', to_otp_version: '29' }
 
     steps:
@@ -42,7 +51,7 @@ jobs:
       - name: Prepare workspace for second Erlang/OTP install
         run: |
           mv ~/work/_temp/.setup-beam "$SETUP_BEAM_2"
-          sed -E -i'' -e 's|.setup-beam/otp|.setup-beam2/otp|' $HORUS_TEST_EXECUTOR
+          sed -E -i'' -e 's|.setup-beam/otp|.setup-beam2/otp|' $HORUS_TEST_EXTRACTOR
 
       - name: Install Erlang/OTP ${{ matrix.from_otp_version }} ("from")
         uses: erlef/setup-beam@v1
@@ -56,7 +65,7 @@ jobs:
           set -x
           which erl
           erl -noinput -eval 'io:format("~s~n", [erlang:system_info(otp_release)]), halt().' > erlang-version-1.txt
-          $HORUS_TEST_EXECUTOR -noinput -eval 'io:format("~s~n", [erlang:system_info(otp_release)]), halt().' > erlang-version-2.txt
+          $HORUS_TEST_EXTRACTOR -noinput -eval 'io:format("~s~n", [erlang:system_info(otp_release)]), halt().' > erlang-version-2.txt
           ! diff -u erlang-version-1.txt erlang-version-2.txt
           ! cmp -s erlang-version-1.txt erlang-version-2.txt
 

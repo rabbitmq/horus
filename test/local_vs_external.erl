@@ -14,13 +14,13 @@
 
 local_test() ->
     Fun = fun() -> ok end,
-    StandaloneFun = horus:to_standalone_fun(Fun),
+    StandaloneFun = helpers:horus_to_standalone_fun(Fun),
     ?assertStandaloneFun(StandaloneFun),
     ?assertMatch(ok, helpers:horus_exec(StandaloneFun, [])).
 
 external_test() ->
     Fun = fun erlang:abs/1,
-    StandaloneFun = horus:to_standalone_fun(Fun),
+    StandaloneFun = helpers:horus_to_standalone_fun(Fun),
     ?assert(is_function(StandaloneFun, 1)),
     ?assertEqual(Fun, StandaloneFun),
     ?assertMatch(1, helpers:horus_exec(StandaloneFun, [1])).

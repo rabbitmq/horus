@@ -754,7 +754,7 @@ cache_standalone_fun(
     end,
     ok.
 
--define(MOD_FOR_MODULE_INFO_FUN, ?MODULE).
+-define(MOD_FOR_MODULE_INFO_FUN, horus_module_info).
 
 extract_module_info_functions(State) ->
     case should_generate_module_info_functions(State) of
