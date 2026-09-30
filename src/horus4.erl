@@ -8,7 +8,11 @@
 
 -module(horus4).
 
+-include_lib("kernel/include/logger.hrl").
 -include_lib("stdlib/include/assert.hrl").
+
+-include("src/horus_error.hrl").
+-include("src/horus_fun.hrl").
 
 -export([% to_standalone_fun/1,
          to_standalone_fun/2 %,
@@ -29,7 +33,10 @@
 -record(horus_gs, {entrypoint :: horus4:fun_ref(),
                    options = #{} :: horus4:options(),
 
-                   functions :: #{horus4:fun_ref() => #horus_fs{} | undefined}
+                   functions :: #{horus4:fun_ref() => #horus_fs{} | undefined},
+                   calls = #{} :: #{},
+
+                   errors = []
                   }).
 
 -type options() :: #{% should_process_function =>
@@ -48,6 +55,10 @@
 -define(SF_ENTRYPOINT, run).
 
 to_standalone_fun(Entrypoint, Options) ->
+    ?LOG_DEBUG(
+       "Horus: starting extraction for entrypoint ~0p",
+       [Entrypoint],
+       #{domain => [horus, extract]}),
     GS = #horus_gs{entrypoint = Entrypoint,
                    options = Options,
 
@@ -101,25 +112,34 @@ extract_mfa(
                    info = Info},
     do_extract(FS, GS).
 
-do_extract(FS, GS) ->
+do_extract(#horus_fs{reference = Reference} = FS, GS) ->
     case can_extract(FS, GS) of
         true ->
             do_extract1(FS, GS);
         false ->
-            % XXX
-            throw(pouet)
+            throw(?horus_error(
+                     call_to_unexported_function,
+                     #{mfa => Reference}))
     end.
 
+%% FIXME: fun() vs MFS, local vs. external.
 can_extract(
-  #horus_fs{info = #{type := local}},
-  _GS) ->
+  #horus_fs{reference = Reference,
+            info = #{type := local}},
+  _GS) when is_function(Reference) ->
     true;
 can_extract(
-  #horus_fs{info = #{type := external,
+  #horus_fs{reference = Reference,
+            info = #{type := external,
                      module := Module,
                      name := Name,
                      arity := Arity}},
-  _GS) ->
+  GS) when is_function(Reference) ->
+    can_extract_external(Module, Name, Arity, GS);
+can_extract(_FS, _GS) ->
+    true.
+
+can_extract_external(Module, Name, Arity, _GS) ->
     _ = try
             Module:module_info()
         catch
@@ -135,8 +155,11 @@ do_extract1(
                      name := Name,
                      arity := Arity,
                      env := Env}} = FS,
-  #horus_gs{entrypoint = Entrypoint,
-            functions = Functions} = GS) ->
+  #horus_gs{entrypoint = Entrypoint} = GS) ->
+    ?LOG_DEBUG(
+       "Horus: extracting function ~s:~s/~b",
+       [Module, Name, Arity],
+       #{domain => [horus, extract]}),
     case horus_cerl:get(Reference) of
         {ok, CErl} ->
             InternalName = case Reference =:= Entrypoint of
@@ -148,27 +171,32 @@ do_extract1(
                                 _        -> Arity + length(Env)
                             end,
             FS1 = FS#horus_fs{internal_name = InternalName,
-                              internal_arity = InternalArity},
-            Functions1 = Functions#{Reference => FS1},
-            GS1 = GS#horus_gs{functions = Functions1},
-            do_extract2(Reference, CErl, GS1);
+                              internal_arity = InternalArity,
+                              core_erlang = CErl},
+            % Functions1 = Functions#{Reference => FS1},
+            % GS1 = GS#horus_gs{functions = Functions1},
+            do_extract2(FS1, GS);
         {error, _} = Error ->
             % XXX
             throw(Error)
     end.
 
-do_extract2(Reference, CErl, GS) ->
+-record(priv, {fs,
+               gs,
+               vars,
+               fun_depths}).
+
+do_extract2(#horus_fs{reference = Reference, core_erlang = CErl} = FS, GS) ->
     PreCallback = fun extract_pre_callback/3,
     PostCallback = fun extract_post_callback/3,
     InitialVars = #{},
     FunDepths = [],
-    Priv = {InitialVars, FunDepths, GS},
+    Priv = #priv{fs = FS,
+                 gs = GS,
+                 vars = InitialVars,
+                 fun_depths = FunDepths},
     case horus_cerl_fold:fold(CErl, PreCallback, PostCallback, Priv) of
-        {ok, CErl1, Priv1} ->
-            {_Vars,
-             _FunDepths,
-             #horus_gs{functions = #{Reference := #horus_fs{} = FS} = Functions} = GS1
-            } = Priv1,
+        {ok, CErl1, #priv{gs = #horus_gs{functions = Functions} = GS1}} ->
             FS1 = FS#horus_fs{core_erlang = CErl1},
             Functions1 = Functions#{Reference => FS1},
             GS2 = GS1#horus_gs{functions = Functions1},
@@ -178,14 +206,350 @@ do_extract2(Reference, CErl, GS) ->
             throw(Error)
     end.
 
-extract_pre_callback(_CNode, _Fold, Priv) ->
+extract_pre_callback(CNode, Fold, #priv{gs = GS} = Priv) ->
+    GS1 = ensure_cerl_node_is_permitted(CNode, GS),
+    Priv1 = Priv#priv{gs = GS1},
+    CNodeType = cerl:type(CNode),
+    extract_pre_callback1(CNodeType, CNode, Fold, Priv1).
+
+extract_pre_callback1(
+  letrec, CNode, _Fold, #priv{fs = FS, gs = GS} = Priv) ->
+    #horus_fs{info = #{module := ThisModule}} = FS,
+    #horus_gs{functions = Functions} = GS,
+
+    Definitions = cerl:letrec_defs(CNode),
+    Functions1 = lists:foldl(
+                   fun({Var, _Fun}, Acc) ->
+                           {Name, Arity} = cerl:var_name(Var),
+                           CallRef = {ThisModule, Name, Arity},
+                           Acc#{CallRef => comprehension}
+                   end, Functions, Definitions),
+    GS1 = GS#horus_gs{functions = Functions1},
+    Priv1 = Priv#priv{gs = GS1},
+    {in, Priv1};
+extract_pre_callback1(
+  apply, CNode, _Fold, #priv{fs = FS, gs = GS} = Priv) ->
+    #horus_fs{info = #{module := ThisModule}} = FS,
+    #horus_gs{functions = Functions, calls = Calls} = GS,
+
+    Op = cerl:apply_op(CNode),
+    case cerl:is_c_var(Op) of
+        true ->
+            case cerl:var_name(Op) of
+                {Name, Arity} ->
+                    CallRef = {ThisModule, Name, Arity},
+                    Calls1 = Calls#{CallRef => true},
+                    GS2 = case Functions of
+                              #{CallRef := _} ->
+                                  GS;
+                              _ ->
+                                  {ShouldProcess, GS1} = (
+                                    should_process_function(
+                                      ThisModule, Name, Arity,
+                                      FS, GS)),
+                                  case ShouldProcess of
+                                      true ->
+                                          Functions1 = Functions#{
+                                                         CallRef => undefined
+                                                        },
+                                          GS1#horus_gs{
+                                            calls = Calls1,
+                                            functions = Functions1
+                                           };
+                                      false ->
+                                          GS1#horus_gs{
+                                            calls = Calls1
+                                           }
+                                  end
+                          end,
+                    #horus_gs{functions = Functions2} = GS2,
+                    CNode1 = case Functions2 of
+                                 #{CallRef := comprehension} ->
+                                     CNode;
+                                 #{CallRef := _} ->
+                                     InternalName = gen_function_name(
+                                                      ThisModule,
+                                                      Name),
+                                     Op1 = cerl:update_c_var(
+                                             Op, {InternalName, Arity}),
+                                     cerl:update_c_apply(
+                                       CNode,
+                                       Op1,
+                                       cerl:apply_args(CNode));
+                                 _ ->
+                                     CNode
+                             end,
+                    Priv1 = Priv#priv{gs = GS2},
+                    {in, CNode1, Priv1};
+                _ ->
+                    {in, Priv}
+            end;
+        false ->
+            {in, Priv}
+    end;
+extract_pre_callback1(
+  call, CNode, _Fold, #priv{fs = FS, gs = GS} = Priv) ->
+    #horus_fs{info = #{module := ThisModule}} = FS,
+    #horus_gs{functions = Functions, calls = Calls} = GS,
+
+    ModuleNode = cerl:call_module(CNode),
+    NameNode = cerl:call_name(CNode),
+    Arity = cerl:call_arity(CNode),
+    IsDynamic = not (cerl:is_literal(ModuleNode) andalso
+                     cerl:is_literal(NameNode)),
+    case IsDynamic of
+        false ->
+            Module = cerl:concrete(ModuleNode),
+            Name = cerl:concrete(NameNode),
+            case can_extract_external(Module, Name, Arity, GS) of
+                true ->
+                    ok;
+                false when Module =:= ThisModule ->
+                    ok;
+                false ->
+                    throw(?horus_error(
+                             call_to_unexported_function,
+                             #{mfa => {Module, Name, Arity}}))
+            end,
+            CallRef = {Module, Name, Arity},
+            Calls1 = Calls#{CallRef => true},
+            case Functions of
+                #{CallRef := _} ->
+                    {in, Priv};
+                _ ->
+                    {ShouldProcess, GS1} = should_process_function(
+                                              Module, Name, Arity,
+                                              FS, GS),
+                    case ShouldProcess of
+                        true ->
+                            Functions1 = Functions#{
+                                           CallRef => undefined
+                                          },
+                            GS2 = GS1#horus_gs{
+                                    calls = Calls1,
+                                    functions = Functions1
+                                   },
+                            InternalName = gen_function_name(
+                                             Module,
+                                             Name),
+                            CNode1 = cerl:ann_c_apply(
+                                       cerl:get_ann(CNode),
+                                       cerl:ann_c_var(
+                                         cerl:get_ann(CNode),
+                                         {InternalName, Arity}),
+                                       cerl:call_args(CNode)),
+                            Priv1 = Priv#priv{gs = GS2},
+                            {in, CNode1, Priv1};
+                        false ->
+                            GS2 = GS1#horus_gs{
+                                    calls = Calls1
+                                   },
+                            Priv1 = Priv#priv{gs = GS2},
+                            {in, Priv1}
+                    end
+            end;
+        true ->
+            Module = case cerl:is_literal(ModuleNode) of
+                         true  -> cerl:concrete(ModuleNode);
+                         false -> '$dynamic'
+                     end,
+            Name = case cerl:is_literal(NameNode) of
+                       true  -> cerl:concrete(NameNode);
+                       false -> '$dynamic'
+                   end,
+            {_ShouldProcess, GS1} = should_process_function(
+                                       Module, Name, Arity,
+                                       FS, GS),
+            Priv1 = Priv#priv{gs = GS1},
+            {in, Priv1}
+    end;
+extract_pre_callback1(
+  'fun', _CNode, Fold, #priv{vars = Vars, fun_depths = FunDepths} = Priv) ->
+    Depth = horus_cerl_fold:get_depth(Fold),
+    PrevFuns = maps:get(Depth, Vars, []),
+    VarsAtDepth = [#{} | PrevFuns],
+    Vars1 = Vars#{Depth => VarsAtDepth},
+    FunDepths1 = [Depth | FunDepths],
+    Priv1 = Priv#priv{vars = Vars1, fun_depths = FunDepths1},
+    {in, Priv1};
+extract_pre_callback1(
+  var, CNode, Fold, #priv{vars = Vars, fun_depths = FunDepths} = Priv) ->
+    VarName = cerl:var_name(CNode),
+    if
+        is_atom(VarName) orelse is_integer(VarName) ->
+            Matching = horus_cerl_fold:get_matching(Fold),
+            Depth = hd(FunDepths),
+            [CurrentFun | PrevFuns] = maps:get(Depth, Vars),
+            Vars1 = case CurrentFun of
+                        #{VarName := _} ->
+                            Vars;
+                        _  ->
+                            UpperDepths = tl(FunDepths),
+                            Defd = lists:any(
+                                     fun(UD) ->
+                                             [F | _] = maps:get(UD, Vars),
+                                             maps:get(VarName, F, false)
+                                     end, UpperDepths),
+                            case Defd of
+                                true ->
+                                    Vars;
+                                false ->
+                                    CurrentFun1 = CurrentFun#{VarName => Matching},
+                                    VarsAtDepth = [CurrentFun1 | PrevFuns],
+                                    Vars#{Depth => VarsAtDepth}
+                            end
+                    end,
+            Priv1 = Priv#priv{vars = Vars1},
+            {in, Priv1};
+        true ->
+            {in, Priv}
+    end;
+extract_pre_callback1(_CNodeType, _CNode, _Fold, Priv) ->
     {in, Priv}.
 
-extract_post_callback(CNode, _Fold, Priv) ->
-    {ok, CNode, Priv}.
+extract_post_callback(CNode, Fold, Priv) ->
+    CNodeType = cerl:type(CNode),
+    extract_post_callback1(CNodeType, CNode, Fold, Priv).
 
-create_standalone_fun(GS) ->
-    GS.
+extract_post_callback1(
+  'fun', CNode, Fold,
+  #priv{fs = FS, vars = Vars, fun_depths = FunDepths} = Priv) ->
+    #horus_fs{internal_arity = InternalArity} = FS,
+
+    case horus_cerl_fold:get_depth(Fold) of
+        0 ->
+            UndefVars1 = maps:map(
+                           fun(_Depth, VarsAtDepth) ->
+                                   VarsAtDepth1 = (
+                                     [begin
+                                          V1 = maps:fold(
+                                                 fun
+                                                     (_VarName, true, Acc1) ->
+                                                         Acc1;
+                                                     (VarName, false, Acc1) ->
+                                                         [VarName | Acc1]
+                                                 end, [], V),
+                                          V2 = lists:sort(V1),
+                                          V2
+                                      end || V <- VarsAtDepth]),
+                                   VarsAtDepth2 = lists:flatten(VarsAtDepth1),
+                                   VarsAtDepth2
+                           end, Vars),
+            Ks = lists:reverse(lists:sort(maps:keys(UndefVars1))),
+            UndefVars2 = [maps:get(K, UndefVars1) || K <- Ks],
+            UndefVars3 = lists:flatten(UndefVars2),
+            UndefVars4 = [cerl:c_var(VarName) || VarName <- UndefVars3],
+            Args = cerl:fun_vars(CNode),
+            Args1 = Args ++ UndefVars4,
+            ?assertEqual(InternalArity, length(Args1)),
+            CNode1 = CNode,
+            CNode2 = cerl:update_c_fun(
+                       CNode1,
+                       Args1,
+                       cerl:fun_body(CNode)),
+            {ok, CNode2, Priv};
+        _ ->
+            FunDepths1 = tl(FunDepths),
+            Priv1 = Priv#priv{fun_depths = FunDepths1},
+            {ok, CNode, Priv1}
+    end;
+extract_post_callback1(_CNodeType, _CNode, _Fold, Priv) ->
+    {ok, Priv}.
+
+create_standalone_fun(
+  #horus_gs{entrypoint = Entrypoint, functions = Functions} = GS) ->
+    case is_standalone_fun_still_needed(GS) of
+        true ->
+            process_errors(GS),
+
+            GeneratedModuleName = gen_module_name(GS),
+            EntrypointFS = maps:get(Entrypoint, Functions),
+            #horus_fs{info = #{module := Module,
+                               arity := Arity,
+                               env := Env},
+                      internal_name = EntrypointName,
+                      internal_arity = EntrypointArity
+                     } = EntrypointFS,
+            FunctionsRefs = lists:sort(maps:keys(Functions)),
+            FunctionsCoreErlang = lists:foldr(
+                                    fun(Reference, Acc) ->
+                                            case Functions of
+                                                #{Reference := #horus_fs{
+                                                                  internal_name = InternalName,
+                                                                  internal_arity = InternalArity,
+                                                                  core_erlang = CoreErlang
+                                                                 }} ->
+                                                    % Ann = cerl:get_ann(CoreErlang),
+                                                    % {function, FunName} = lists:keyfind(function, 1, Ann),
+                                                    FunName = {InternalName, InternalArity},
+                                                    FunRef = {cerl:c_var(FunName), CoreErlang},
+                                                    [FunRef | Acc];
+                                                #{Reference := comprehension} ->
+                                                    Acc
+                                            end
+                                    end, [], FunctionsRefs),
+            % io:format(standard_error, "CORE ERLANG:~n~p~n", [FunctionsCoreErlang]),
+            MIExports = [cerl:c_var({module_info, 0}),
+                         cerl:c_var({module_info, 1})],
+            MICoreErlang = [{cerl:c_var({module_info, 0}),
+                             cerl:ann_c_fun(
+                               [{function, {module_info, 0}}],
+                               [],
+                               cerl:c_call(
+                                 cerl:abstract(erlang),
+                                 cerl:abstract(get_module_info),
+                                 [cerl:abstract(GeneratedModuleName)]))},
+                            {cerl:c_var({module_info, 1}),
+                             cerl:ann_c_fun(
+                               [{function, {module_info, 0}}],
+                               [cerl:c_var(0)],
+                               cerl:c_call(
+                                 cerl:abstract(erlang),
+                                 cerl:abstract(get_module_info),
+                                 [cerl:abstract(GeneratedModuleName),
+                                  cerl:c_var(0)]))}],
+
+            Exports = [cerl:c_var({EntrypointName, EntrypointArity})],
+            ModuleCoreErlang = cerl:c_module(
+                                 cerl:c_atom(GeneratedModuleName),
+                                 Exports ++ MIExports,
+                                 FunctionsCoreErlang ++ MICoreErlang),
+            % ?LOG_ALERT(
+            %    "Generated module Core Erlang:~n~p~n",
+            %    [ModuleCoreErlang]),
+            % horus_cerl:format(ModuleCoreErlang),
+
+            FunNameMapping = gen_fun_name_mapping(Functions),
+            Env1 = case Module of
+                       erl_eval -> [];
+                       _        -> Env
+                   end,
+            StandaloneFun = #horus_fun{
+                               module = GeneratedModuleName,
+                               beam = ModuleCoreErlang,
+                               arity = Arity,
+                               literal_funs = [],
+                               fun_name_mapping = FunNameMapping,
+                               env = Env1},
+
+            % {ok, StandaloneFun}.
+            StandaloneFun;
+        false ->
+            Entrypoint
+    end.
+
+-spec gen_module_name(GS) -> Module when
+      GS :: #horus_gs{},
+      Module :: module().
+
+gen_module_name(#horus_gs{entrypoint = Entrypoint, functions = Functions}) ->
+    #horus_fs{info = #{module := Module,
+                       name := Name}} = maps:get(Entrypoint, Functions),
+    Checksum = erlang:phash2(Functions),
+    InternalName = lists:flatten(
+                     io_lib:format(
+                       "horus__~s__~s__~b", [Module, Name, Checksum])),
+    list_to_atom(InternalName).
 
 -spec gen_function_name(Module, Name) -> Name when
       Module :: module(),
@@ -196,3 +560,112 @@ gen_function_name(Module, Name) ->
                      io_lib:format(
                        "~s__~s", [Module, Name])),
     list_to_atom(InternalName).
+
+-spec should_process_function(Module, Name, Arity, FS, GS) ->
+    {ShouldProcess, GS} when
+      Module :: module(),
+      Name :: atom(),
+      Arity :: arity(),
+      FS :: #horus_fs{},
+      GS :: #horus_gs{},
+      ShouldProcess :: boolean().
+
+should_process_function(
+  erl_eval, Name, Arity,
+  #horus_fs{info = #{module := erl_eval,
+                     name := Name,
+                     arity := Arity,
+                     type := local}},
+  #horus_gs{} = GS) ->
+    %% We want to process lambas loaded by `erl_eval'
+    %% even though we wouldn't do that with the
+    %% regular `erl_eval' API.
+    {true, GS};
+should_process_function(
+  Module, Name, Arity,
+  #horus_fs{info = #{module := FromModule}},
+  #horus_gs{options = #{should_process_function := Callback},
+            errors = Errors} = GS)
+  when is_function(Callback) ->
+    try
+        % io:format(standard_error, "should proceed ~p:~p/~p: ...~n", [Module, Name, Arity]),
+        ShouldProcess = Callback(Module, Name, Arity, FromModule),
+        % io:format(standard_error, "should proceed ~p:~p/~p: ~p~n", [Module, Name, Arity, ShouldProcess]),
+        {ShouldProcess, GS}
+    catch
+        throw:Error ->
+            Errors1 = Errors ++ [Error],
+            GS1 = GS#horus_gs{errors = Errors1},
+            {false, GS1}
+    end;
+should_process_function(Module, _Name, _Arity, _FromModule, GS) ->
+    ShouldProcess = horus_utils:should_process_module(Module),
+    % io:format(standard_error, "should proceed ~p: ~p~n", [Module, ShouldProcess]),
+    {ShouldProcess, GS}.
+
+-spec ensure_cerl_node_is_permitted(Node, GS) ->
+    GS when
+      Node :: cerl:cerl(),
+      GS :: #horus_gs{}.
+
+ensure_cerl_node_is_permitted(
+  CNode,
+  #horus_gs{options = #{ensure_cerl_node_is_permitted := Callback},
+            errors = Errors} = GS)
+  when is_function(Callback) ->
+    try
+        Callback(CNode),
+        GS
+    catch
+        throw:Error ->
+            % io:format(standard_error, "ensure_cerl_node_is_permitted = ~p~n", [Error]),
+            Errors1 = Errors ++ [Error],
+            GS#horus_gs{errors = Errors1}
+    end;
+ensure_cerl_node_is_permitted(_CNode, GS) ->
+    GS.
+
+-spec is_standalone_fun_still_needed(GS) -> IsNeeded when
+      GS :: #horus_gs{},
+      IsNeeded :: boolean().
+
+is_standalone_fun_still_needed(
+  #horus_gs{options = #{is_standalone_fun_still_needed := Callback},
+            calls = Calls,
+            errors = Errors})
+  when is_function(Callback) ->
+    Callback(#{calls => Calls,
+               errors => Errors});
+is_standalone_fun_still_needed(_GS) ->
+    true.
+
+gen_fun_name_mapping(Functions) ->
+    FunNameMapping = maps:fold(fun gen_fun_name_mapping1/3, #{}, Functions),
+    FunNameMapping.
+
+gen_fun_name_mapping1(
+  MFA,
+  #horus_fs{internal_name = Name, internal_arity = Arity},
+  Acc)
+  when is_tuple(MFA) ->
+    Acc#{{Name, Arity} => MFA};
+gen_fun_name_mapping1(
+  Fun,
+  #horus_fs{internal_name = Name, internal_arity = Arity, info = Info},
+  Acc)
+  when is_function(Fun) ->
+    #{module := M,
+      name := F,
+      arity := A} = Info,
+    Acc#{{Name, Arity} => {M, F, A}};
+gen_fun_name_mapping1(
+  _MFA,
+  comprehension,
+  Acc) ->
+    Acc.
+
+%% TODO: Return all errors?
+process_errors(#horus_gs{errors = []}) ->
+    ok;
+process_errors(#horus_gs{errors = [Error | _]}) ->
+    throw(?horus_error(extraction_denied, #{error => Error})).

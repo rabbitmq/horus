@@ -393,7 +393,8 @@ to_standalone_fun(Fun, Options) ->
             {StandaloneFun, _State} = to_standalone_fun1(Fun, Options),
             StandaloneFun;
         true ->
-            R = horus3:to_standalone_fun(Fun, Options),
+            % R = horus3:to_standalone_fun(Fun, Options),
+            R = horus4:to_standalone_fun(Fun, Options),
             % timer:sleep(500),
             R
     end.
