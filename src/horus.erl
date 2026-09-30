@@ -818,6 +818,8 @@ do_compile(Input, CompilerOptions) ->
                              return_errors,
                              return_warnings,
                              deterministic,
+                             debug_info,
+                             line_coverage,
 
                              %% We set undocumented compiler options to make
                              %% sure the compiler generates a Beam module
@@ -1185,6 +1187,7 @@ load_standalone_fun(
                                     compile(Beam)
                             end,
                     Ret = code:load_binary(Module, ?MODULE_STRING, Beam1),
+                    % {ok, _} = cover:compile(Module),
                     global:del_lock(Lock, [node()]),
                     case Ret of
                         {module, _} ->

@@ -62,6 +62,8 @@ cover_compilation_works_test() ->
     StandaloneFun2 = horus:to_standalone_fun(Fun, #{debug_info => true}),
     ?IF_NATIVE_COVERAGE_IS_SUPPORTED(
        begin
+           ?assertEqual(Ret, horus:exec(StandaloneFun2, [Arg])),
+           ?assertEqual({ok, Analysis}, cover:analyse(Module)),
            ?debugMsg(
               "Coverage support testing skipped as native coverage counters "
               "can't be modified externally")
