@@ -72,6 +72,31 @@ do_extract_missing_functions([MissingFun | Rest], Extraction) ->
 do_extract_missing_functions([], Extraction) ->
     extract_missing_functions(Extraction).
 
+%% Top-level extraction:
+%% * Initialise global extraction state
+%% * Extract top-level function
+%% * Is function still needed?
+%% * Handle errors
+%% * Add module_info()
+%% * Generate standalone function:
+%%     * Generate module name
+%%     * Can it be in text form?
+%%     * Handle tuple-based vs native records
+%%     * Handle function mapping for stacktraces and coverage support
+%%
+%% Specific Function extraction:
+%% * Fun info (lambda only)
+%% * Can/should be extracted? (like local vs. external, is exported, extract non-exported option, should-be-extracted option)
+%% * Initialise specific function extraction state
+%% * Generate function name
+%% * Compute arity (lambda only: vs. env)
+%% * Get Core Erlang
+%% * Walk through Core Erlang:
+%%     * Handle variables from env.
+%%     * Handle call permissions
+%%     * Handle calls
+%% * Extract anonymous function env (lambda only)
+
 extract_function(Fun, #extraction{'fun' = EntryPoint} = Extraction)
   when is_function(Fun) ->
     FunInfo = horus_erlfun_utils:info(Fun),
@@ -84,7 +109,12 @@ extract_function(Fun, #extraction{'fun' = EntryPoint} = Extraction)
         local ->
             ok;
         external ->
-            _ = catch Module:module_info(),
+            _ = try
+                    Module:module_info()
+                catch
+                    _:_ ->
+                        ok
+                end,
             case erlang:function_exported(Module, Name, Arity) of
                 true ->
                     ok;
@@ -204,7 +234,12 @@ do_extract_function(
                                        false ->
                                            Module = cerl:concrete(ModuleNode),
                                            Name = cerl:concrete(NameNode),
-                                           _ = catch Module:module_info(),
+                                           _ = try
+                                                   Module:module_info()
+                                               catch
+                                                   _:_ ->
+                                                       ok
+                                               end,
                                            case erlang:function_exported(Module, Name, Arity) of
                                                true ->
                                                    ok;
