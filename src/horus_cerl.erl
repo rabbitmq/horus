@@ -109,7 +109,12 @@ do_get1(Reference, Target, ModuleCoreErlang) when is_function(Reference) ->
                                               _      -> {in, Priv}
                                           end;
                                       false ->
-                                          {in, Priv}
+                                          case lists:keyfind(function, 1, Ann) of
+                                              {function, Target} ->
+                                                  {stop, Node};
+                                              _ ->
+                                                  {in, Priv}
+                                          end
                                   end;
                               _ ->
                                   {in, Priv}
@@ -117,7 +122,9 @@ do_get1(Reference, Target, ModuleCoreErlang) when is_function(Reference) ->
                   end,
     case horus_cerl_fold:fold(ModuleCoreErlang, PreCallback, none, undefined) of
         {interrupted, FunCoreErlang} ->
-            {ok, FunCoreErlang}
+            {ok, FunCoreErlang};
+        _ ->
+            throw({function_not_found, Reference, Target, ModuleCoreErlang})
     end;
 do_get1(Reference, Target, ModuleCoreErlang) when is_tuple(Reference) ->
     PreCallback = fun(Node, _Fold, undefined = Priv) ->

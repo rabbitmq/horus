@@ -20,25 +20,50 @@
 
 -export_type([beam/0]).
 
--spec get_beam(Module) -> Beam when
+-define(
+   ABSTRACT_CODE_CACHE_KEY(Module, Checksum),
+   {horus, abstract_code_cache, Module, Checksum}).
+
+-spec get_abstract_code(Module) -> AbstractCode when
       Module :: module(),
-      Beam :: horus_beam_utils:beam().
-
-get_beam(Module) ->
-    case code:get_object_code(Module) of
-        {_Module, Beam, _Filename} ->
-            Beam;
-        error ->
-            ?horus_misuse(
-               module_not_found,
-               #{module => Module})
-    end.
-
--spec get_abstract_code(Beam) -> AbstractCode when
-      Beam :: horus_beam_utils:beam(),
       AbstractCode :: beam_lib:abs_code().
 
-get_abstract_code(Beam) when is_binary(Beam) ->
+get_abstract_code(Module) when is_atom(Module) ->
+    Checksum = Module:module_info(md5),
+    CacheKey = ?ABSTRACT_CODE_CACHE_KEY(Module, Checksum),
+    case persistent_term:get(CacheKey, undefined) of
+        AbstractCode when is_list(AbstractCode) ->
+            AbstractCode;
+        undefined ->
+            AbstractCode = do_get_abstract_code(Module, CacheKey),
+            AbstractCode
+    end.
+
+do_get_abstract_code(Module, CacheKey) ->
+    LockKey = {horus, abstract_code_lock, Module},
+    Lock = {LockKey, self()},
+    global:set_lock(Lock, [node()]),
+    try
+        case persistent_term:get(CacheKey, undefined) of
+            AbstractCode when is_list(AbstractCode) ->
+                AbstractCode;
+            undefined ->
+                AbstractCode = do_get_abstract_code_locked(Module),
+                AbstractCode
+        end
+    after
+        global:del_lock(Lock, [node()])
+    end.
+
+do_get_abstract_code_locked(Module) ->
+    Beam = get_beam(Module),
+    {ok, {Module, Checksum}} = beam_lib:md5(Beam),
+    CacheKey = ?ABSTRACT_CODE_CACHE_KEY(Module, Checksum),
+    AbstractCode = get_abstract_code_from_beam(Beam),
+    persistent_term:put(CacheKey, AbstractCode),
+    AbstractCode.
+
+get_abstract_code_from_beam(Beam) when is_binary(Beam) ->
     case beam_lib:chunks(Beam, [abstract_code]) of
         {ok, {_Module, [{abstract_code, {raw_abstract_v1, AbstractCode}}]}} ->
             % logger:alert("Module ~s abstract code: ~p", [_Module, AbstractCode]),
@@ -52,7 +77,19 @@ get_abstract_code(Beam) when is_binary(Beam) ->
             ?horus_misuse(
                abstract_code_unavailable,
                Props)
-    end;
-get_abstract_code(Module) when is_atom(Module) ->
-    Beam = get_beam(Module),
-    get_abstract_code(Beam).
+    end.
+
+-spec get_beam(Module) -> Beam when
+      Module :: module(),
+      Beam :: horus_beam_utils:beam().
+
+get_beam(Module) ->
+    io:format(standard_error, "------ Get beam ~p~n", [Module]),
+    case code:get_object_code(Module) of
+        {_Module, Beam, _Filename} ->
+            Beam;
+        error ->
+            ?horus_misuse(
+               module_not_found,
+               #{module => Module})
+    end.
