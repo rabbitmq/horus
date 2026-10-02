@@ -33,7 +33,7 @@
 -record(horus_gs, {entrypoint :: fun(),
                    options = #{} :: horus4:options(),
 
-                   functions :: #{horus4:fun_ref() => #horus_fs{} | comprehension | undefined | {undefined, local | external}},
+                   functions :: #{horus4:fun_ref() => #horus_fs{} | inline | undefined | {undefined, local | external}},
                    calls = #{} :: calls_map(),
 
                    errors = []
@@ -249,7 +249,7 @@ extract_pre_callback1(
                    fun({Var, _Fun}, Acc) ->
                            {Name, Arity} = cerl:var_name(Var),
                            CallRef = {ThisModule, Name, Arity},
-                           Acc#{CallRef => comprehension}
+                           Acc#{CallRef => inline}
                    end, Functions, Definitions),
     GS1 = GS#horus_gs{functions = Functions1},
     Priv1 = Priv#priv{gs = GS1},
@@ -263,22 +263,13 @@ extract_pre_callback1(
         true ->
             case cerl:var_name(Op) of
                 {Name, Arity} ->
-                    io:format("APPLY ~p:~p~n", [Name, Arity]),
-                    case Name of
-                        %% Distinguer les "goto" qu’on ne doit pas suivre.
-                        'recv$^0' ->
-                            io:format("~p~n", [FS]),
-                            throw(stop);
-                        _ ->
-                            ok
-                    end,
                     GS1 = record_call(ThisModule, Name, Arity, local, FS, GS),
                     Priv1 = Priv#priv{gs = GS1},
 
                     #horus_gs{functions = Functions1} = GS1,
                     CallRef = {ThisModule, Name, Arity},
                     CNode1 = case Functions1 of
-                                 #{CallRef := comprehension} ->
+                                 #{CallRef := inline} ->
                                      CNode;
                                  #{CallRef := _} ->
                                      InternalName = gen_function_name(
@@ -481,7 +472,7 @@ create_standalone_fun(
                                                     FunName = {InternalName, InternalArity},
                                                     FunRef = {cerl:c_var(FunName), CoreErlang},
                                                     [FunRef | Acc];
-                                                #{Reference := comprehension} ->
+                                                #{Reference := inline} ->
                                                     Acc
                                             end
                                     end, [], FunctionsRefs),
@@ -558,33 +549,33 @@ gen_function_name(Module, Name) ->
     list_to_atom(InternalName).
 
 record_call(
+  Module, Name, Arity, _Type, _FS,
+  #horus_gs{functions = Functions, calls = Calls} = GS)
+  when is_map_key({Module, Name, Arity}, Functions) orelse
+       is_map_key({Module, Name, Arity}, Calls) ->
+    GS;
+record_call(
   Module, Name, Arity, Type, FS,
   #horus_gs{functions = Functions, calls = Calls} = GS) ->
     CallRef = {Module, Name, Arity},
-    GS2 = case Calls of
-              #{CallRef := _} ->
-                  GS;
-              _ ->
-                  {ShouldProcess, GS1} = should_process_function(
-                                            Module, Name, Arity,
-                                            FS, GS),
-                  Calls1 = Calls#{CallRef => true},
-                  case ShouldProcess of
-                      true ->
-                          Functions1 = Functions#{
-                                         CallRef => {undefined, Type}
-                                        },
-                          GS1#horus_gs{
-                            calls = Calls1,
-                            functions = Functions1
-                           };
-                      false ->
-                          GS1#horus_gs{
-                            calls = Calls1
-                           }
-                  end
-          end,
-    GS2.
+    {ShouldProcess, GS1} = should_process_function(
+                              Module, Name, Arity,
+                              FS, GS),
+    Calls1 = Calls#{CallRef => true},
+    case ShouldProcess of
+        true ->
+            Functions1 = Functions#{
+                           CallRef => {undefined, Type}
+                          },
+            GS1#horus_gs{
+              calls = Calls1,
+              functions = Functions1
+             };
+        false ->
+            GS1#horus_gs{
+              calls = Calls1
+             }
+    end.
 
 -spec should_process_function(Module, Name, Arity, FS, GS) ->
     {ShouldProcess, GS} when
@@ -615,7 +606,7 @@ should_process_function(
     try
         % io:format(standard_error, "should proceed ~p:~p/~p: ...~n", [Module, Name, Arity]),
         ShouldProcess = Callback(Module, Name, Arity, FromModule),
-        io:format(standard_error, "should proceed ~p:~p/~p: ~p~n", [Module, Name, Arity, ShouldProcess]),
+        % io:format(standard_error, "should proceed ~p:~p/~p: ~p~n", [Module, Name, Arity, ShouldProcess]),
         {ShouldProcess, GS}
     catch
         throw:Error ->
@@ -687,7 +678,7 @@ gen_fun_name_mapping1(
     Acc#{{Name, Arity} => {M, F, A}};
 gen_fun_name_mapping1(
   _MFA,
-  comprehension,
+  inline,
   Acc) ->
     Acc.
 

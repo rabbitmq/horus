@@ -14,7 +14,8 @@
 -include("src/horus_error.hrl").
 
 -export([get_beam/1,
-         get_abstract_code/1]).
+         get_abstract_code/1,
+         get_abstract_code_from_beam/1]).
 
 -type beam() :: binary().
 
@@ -33,8 +34,10 @@ get_abstract_code(Module) when is_atom(Module) ->
     CacheKey = ?ABSTRACT_CODE_CACHE_KEY(Module, Checksum),
     case persistent_term:get(CacheKey, undefined) of
         AbstractCode when is_list(AbstractCode) ->
+            % io:format(standard_error, "------ Get AC ~p from cache~n", [Module]),
             AbstractCode;
         undefined ->
+            % io:format(standard_error, "------ Get AC ~p from beam~n", [Module]),
             AbstractCode = do_get_abstract_code(Module, CacheKey),
             AbstractCode
     end.
@@ -84,7 +87,7 @@ get_abstract_code_from_beam(Beam) when is_binary(Beam) ->
       Beam :: horus_beam_utils:beam().
 
 get_beam(Module) ->
-    io:format(standard_error, "------ Get beam ~p~n", [Module]),
+    % io:format(standard_error, "------ Get beam ~p~n", [Module]),
     case code:get_object_code(Module) of
         {_Module, Beam, _Filename} ->
             Beam;

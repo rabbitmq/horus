@@ -36,55 +36,99 @@ get(Fun) when is_function(Fun) ->
     ?LOG_DEBUG(
        "Horus: get Core Erlang for function ~s:~s/~b",
        [Module, Name, Arity]),
-    AbstractCode = case Module of
+    CErl = case Module of
                        erl_eval ->
-                           erl_eval_fun_to_abstract_code(Module, Name, Arity, Env);
+                           erl_eval_fun_to_core_erlang(Module, Name, Arity, Env);
                        _ ->
-                           horus_beam_utils:get_abstract_code(Module)
+                           get_core_erlang(Module)
                    end,
     % io:format(standard_error, "FunInfo = ~p~nAbstract Code = ~p~n", [FunInfo, AbstractCode]),
     if
         Type =:= local andalso Module =/= erl_eval ->
-            do_get(Fun, {Name, Arity}, AbstractCode);
+            do_get(Fun, {Name, Arity}, CErl);
         Type =:= external orelse Module =:= erl_eval ->
-            do_get({Module, Name, Arity}, {Name, Arity}, AbstractCode)
+            do_get({Module, Name, Arity}, {Name, Arity}, CErl)
     end;
 get({Module, Name, Arity} = MFA) ->
     ?LOG_DEBUG(
        "Horus: get Core Erlang for function ~s:~s/~b",
        [Module, Name, Arity]),
-    AbstractCode = horus_beam_utils:get_abstract_code(Module),
-    do_get(MFA, {Name, Arity}, AbstractCode).
+    CErl = get_core_erlang(Module),
+    do_get(MFA, {Name, Arity}, CErl).
 
--spec erl_eval_fun_to_abstract_code(Module, Name, Arity, Env) -> AbstractCode when
+-spec erl_eval_fun_to_core_erlang(Module, Name, Arity, Env) -> CErl when
       Module :: module(),
       Name :: atom(),
       Arity :: arity(),
       Env :: any(),
-      AbstractCode :: beam_lib:abs_code().
+      CErl :: cerl:cerl().
 %% @private
 
-erl_eval_fun_to_abstract_code(Module, Name, Arity, [{_, Bindings, _, _, _, Clauses}])
+erl_eval_fun_to_core_erlang(Module, Name, Arity, [{_, Bindings, _, _, _, Clauses}])
   when Bindings =:= [] orelse %% Erlang is using a list for bindings,
        Bindings =:= #{} ->    %% but Elixir is using a map.
     %% Erlang starting from 25.
-    erl_eval_fun_to_abstract_code1(Module, Name, Arity, Clauses);
-erl_eval_fun_to_abstract_code(Module, Name, Arity, [{Bindings, _, _, Clauses}])
+    erl_eval_fun_to_core_erlang1(Module, Name, Arity, Clauses);
+erl_eval_fun_to_core_erlang(Module, Name, Arity, [{Bindings, _, _, Clauses}])
   when Bindings =:= [] orelse %% Erlang is using a list for bindings,
        Bindings =:= #{} ->    %% but Elixir is using a map.
     %% Erlang up to 24.
-    erl_eval_fun_to_abstract_code1(Module, Name, Arity, Clauses).
+    erl_eval_fun_to_core_erlang1(Module, Name, Arity, Clauses).
 
-erl_eval_fun_to_abstract_code1(Module, Name, Arity, Clauses) ->
+erl_eval_fun_to_core_erlang1(Module, Name, Arity, Clauses) ->
     %% We construct an abstract form based on the `env' of the lambda loaded
     %% by `erl_eval'.
     Anno = erl_anno:from_term(1),
     Forms = [{attribute, Anno, module, Module},
              {attribute, Anno, export, [{Name, Arity}]},
              {function, Anno, Name, Arity, Clauses}],
-    Forms.
+    % io:format(standard_error, "------ Compile AC ~p~n", [Module]),
+    CErl = compile_abstract_code(Forms),
+    CErl.
 
-do_get(Reference, Target, AbstractCode) ->
+-define(
+   CORE_ERLANG_CACHE_KEY(Module, Checksum),
+   {horus, core_erlang_cache, Module, Checksum}).
+
+get_core_erlang(Module) when is_atom(Module) ->
+    Checksum = Module:module_info(md5),
+    CacheKey = ?CORE_ERLANG_CACHE_KEY(Module, Checksum),
+    case persistent_term:get(CacheKey, undefined) of
+        CErl when is_tuple(CErl) ->
+            % io:format(standard_error, "------ Get AC ~p from cache~n", [Module]),
+            CErl;
+        undefined ->
+            % io:format(standard_error, "------ Get AC ~p from beam~n", [Module]),
+            CErl = do_get_core_erlang(Module, CacheKey),
+            CErl
+    end.
+
+do_get_core_erlang(Module, CacheKey) ->
+    LockKey = {horus, core_erlang_lock, Module},
+    Lock = {LockKey, self()},
+    global:set_lock(Lock, [node()]),
+    try
+        case persistent_term:get(CacheKey, undefined) of
+            CErl when is_tuple(CErl) ->
+                CErl;
+            undefined ->
+                CErl = do_get_core_erlang_locked(Module),
+                CErl
+        end
+    after
+        global:del_lock(Lock, [node()])
+    end.
+
+do_get_core_erlang_locked(Module) ->
+    Beam = horus_beam_utils:get_beam(Module),
+    AbstractCode = horus_beam_utils:get_abstract_code_from_beam(Beam),
+    {ok, {Module, Checksum}} = beam_lib:md5(Beam),
+    CacheKey = ?CORE_ERLANG_CACHE_KEY(Module, Checksum),
+    CErl = compile_abstract_code(AbstractCode),
+    persistent_term:put(CacheKey, CErl),
+    CErl.
+
+compile_abstract_code(AbstractCode) ->
     CompilerOptions = [binary,
                        to_core,
                        warnings_as_errors,
@@ -93,8 +137,11 @@ do_get(Reference, Target, AbstractCode) ->
                        deterministic],
     {ok, _, ModuleCoreErlang, _} = compile:forms(
                                      AbstractCode, CompilerOptions),
-    % io:format(standard_error, "CORE ERLANG:~n~p~n", [ModuleCoreErlang]),
-    do_get1(Reference, Target, ModuleCoreErlang).
+    ModuleCoreErlang.
+
+do_get(Reference, Target, CErl) ->
+    % io:format(standard_error, "CORE ERLANG:~n~p~n", [CErl]),
+    do_get1(Reference, Target, CErl).
 
 do_get1(Reference, Target, ModuleCoreErlang) when is_function(Reference) ->
     PreCallback = fun(Node, _Fold, undefined = Priv) ->
